@@ -1,7 +1,9 @@
+# Models/Architecture_LCM.py
+
 import torch
 import torch.nn as nn
 
-from models.AdaLN import AdaLayerNorm
+from LexaLCM.LCM.Models.AdaLN import AdaLayerNorm
 
 class SwiGLU(nn.Module):
     def __init__(self):
@@ -12,19 +14,19 @@ class SwiGLU(nn.Module):
         x1, x2 = x.chunk(2, dim=-1)
         return self.silu(x1) * x2
 
-def rotate_half(x):
+def RotateHalf(x):
     x1 = x[..., ::2]
     x2 = x[..., 1::2]
     return torch.cat((-x2, x1), dim=-1)
 
-def apply_rotary_emb(q, k, sin, cos):
+def ApplyRotaryEmb(q, k, sin, cos):
     # q, k: [batch, n_heads, seq_len, head_dim]
     # sin, cos: [seq_len, head_dim]
-    q_rot = (q * cos) + (rotate_half(q) * sin)
-    k_rot = (k * cos) + (rotate_half(k) * sin)
+    q_rot = (q * cos) + (RotateHalf(q) * sin)
+    k_rot = (k * cos) + (RotateHalf(k) * sin)
     return q_rot, k_rot
 
-def build_rope_cache(seq_len, head_dim, device):
+def BuildRopeCache(seq_len, head_dim, device):
     inv_freq = 1.0 / (10000 ** (torch.arange(0, head_dim, 2, device=device).float() / head_dim))
     t = torch.arange(seq_len, device=device).float()
     freqs = torch.einsum('i,j->ij', t, inv_freq)
@@ -47,7 +49,7 @@ class RoPEMultiheadAttention(nn.Module):
         self.out_proj = nn.Linear(embed_dim, embed_dim)
 
         # Cache RoPE embeddings once in FP32
-        sin, cos = build_rope_cache(max_seq_len, self.head_dim, 'cpu')
+        sin, cos = BuildRopeCache(max_seq_len, self.head_dim, 'cpu')
         self.register_buffer('sin_cached', sin, persistent=False)
         self.register_buffer('cos_cached', cos, persistent=False)
 
@@ -64,11 +66,11 @@ class RoPEMultiheadAttention(nn.Module):
         v = v.view(batch, seq_len, self.num_heads, self.head_dim).transpose(1,2)
 
         # Use cached RoPE embeddings (faster and memory efficient!)
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast(device_type='cuda', enabled=False):
             sin = self.sin_cached[:seq_len, :].to(device=q.device, dtype=q.dtype).unsqueeze(0).unsqueeze(0)
             cos = self.cos_cached[:seq_len, :].to(device=q.device, dtype=q.dtype).unsqueeze(0).unsqueeze(0)
 
-        q, k = apply_rotary_emb(q, k, sin, cos)
+        q, k = ApplyRotaryEmb(q, k, sin, cos)
 
         # Compute attention scores
         attn_scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim ** 0.5)
@@ -159,7 +161,7 @@ class TwoTowerLCM(nn.Module):
 
     def forward(self, x, attention_mask=None, timestep=None):
         # SONAR input projection in FP32
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast(device_type='cuda', enabled=False):
             x = self.input_proj(x.float())  # always do input proj in FP32
 
         # Contextualizer (in autocast/bf16 context)

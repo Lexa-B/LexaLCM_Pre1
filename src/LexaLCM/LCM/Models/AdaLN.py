@@ -1,4 +1,5 @@
-# models/adaln.py
+# Models/AdaLN.py
+
 import torch
 import torch.nn as nn
 

@@ -19,7 +19,7 @@ uv pip install -e ".[gpu]" # install the dependencies (gpu)... if you want to in
 
 ### Dry run (sanity check)
 ```bash
-clear & uv run --extra gpu src/LexaLCM/LCM/main.py --dry-run --verbose
+clear & uv run --extra gpu src/LexaLCM/LCM/Main.py --dry-run --verbose
 ```
 
 

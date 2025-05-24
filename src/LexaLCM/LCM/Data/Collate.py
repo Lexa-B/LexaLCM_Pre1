@@ -1,7 +1,9 @@
+# Data/Collate.py
+
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
-def collate_sonar_batch(batch):
+def CollateSONARBatch(batch):
     """
     Pads a batch of [seq_len, emb_dim] tensors to the longest sequence.
     Returns: padded_batch [B, max_seq_len, emb_dim], attention_mask [B, max_seq_len]

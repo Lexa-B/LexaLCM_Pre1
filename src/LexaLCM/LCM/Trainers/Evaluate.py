@@ -1,9 +1,12 @@
+# Trainers/Evaluate.py
+
 import torch
-from trainers.losses import compute_loss
 import wandb
 
+from LexaLCM.LCM.Trainers.Losses import ComputeLoss
+
 @torch.no_grad()
-def evaluate(model, val_loader, step):
+def Evaluate(model, val_loader, step):
     model.eval()
     total_loss = 0.0
     total_batches = 0
@@ -16,7 +19,7 @@ def evaluate(model, val_loader, step):
 
         with torch.cuda.amp.autocast(dtype=torch.bfloat16):
             output = model(batch, attention_mask=mask)
-            loss = compute_loss(output, batch, mask=mask)
+            loss = ComputeLoss(output, batch, mask=mask)
 
         total_loss += loss.item()
         total_batches += 1
@@ -28,4 +31,4 @@ def evaluate(model, val_loader, step):
     if wandb.run:
         wandb.log({"val/loss": avg_loss, "step": step})
 
-    model.train()
+    model.Train()

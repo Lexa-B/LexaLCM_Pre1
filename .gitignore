@@ -101,8 +101,11 @@ ENV/
 .vscode/settings.json
 .vscode/launch.json
 
-# datasets
+# Datasets
 src/LexaLCM/Content/Datasets/
+
+# Checkpoints
+src/LexaLCM/LCM/checkpoints/
 
 # WandB
 wandb/

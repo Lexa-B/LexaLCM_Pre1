@@ -1,7 +1,7 @@
 
 
 model:
-  name: two_tower_lcm
+  name: Architecture_LCM
   # hidden_size: 2048 # commented original value because it's bugged. ToDo: fix it.
   hidden_size: 1024
   num_attention_heads: 16

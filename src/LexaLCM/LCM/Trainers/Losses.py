@@ -1,7 +1,9 @@
+# Trainers/Losses.py
+
 import torch
 import torch.nn.functional as F
 
-def compute_loss(pred, target, mask=None):
+def ComputeLoss(pred, target, mask=None):
     """
     Computes MSE loss between predicted and target embeddings, optionally masked.
     """
