@@ -87,3 +87,15 @@ For example:
 ```bash
 clear & uv run --extra data src/Scripts/Data/VisualizeDataset.py -b 20 -d src/LexaLCM/Content/Datasets/Wikipedia_Ja
 ```
+
+
+
+
+## Bootstrap the model
+
+```bash
+clear & uv run --extra gpu src/LexaLCM/LCM/Utils/BootstrapLCM.py
+```
+
+
+

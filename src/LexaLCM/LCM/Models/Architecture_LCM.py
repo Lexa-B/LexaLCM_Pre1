@@ -17,18 +17,24 @@ class LexaLCMModel(PreTrainedModel):
         self.prenet_c = PreNetC(config.prenet_c_config)
         self.contextualizer = Contextualizer(config.contextualizer_config)
         self.postnet_c = PostNetC(config.postnet_c_config)
+
         self.prenet_d = PreNetD(config.prenet_d_config)
         self.denoiser = Denoiser(config.denoiser_config)
         self.postnet_d = PostNetD(config.postnet_d_config)
 
-    def forward(self, inputs, **kwargs):
-        x_c = self.prenet_c(inputs)
+    def forward(self, x, attention_mask=None, timestep=None):
+        # Context path (pass-through)
+        x_c = self.prenet_c(x)
         context = self.contextualizer(x_c)
         output_c = self.postnet_c(context)
-        x_d = self.prenet_d(inputs)
-        denoised = self.denoiser(x_d, context, **kwargs)
+
+        # Denoising path (also pass-through)
+        x_d = self.prenet_d(x)
+        denoised = self.denoiser(x_d, context, attention_mask, timestep=timestep)
         output_d = self.postnet_d(denoised)
+
         return output_d
+
 
 
 
