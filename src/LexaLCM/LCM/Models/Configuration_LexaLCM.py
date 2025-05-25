@@ -13,20 +13,18 @@ class LexaLCMConfig(PretrainedConfig):
 
     def __init__(
         self,
-        contextualizer_config=None,
-        denoiser_config=None,
-        prenet_c_config=None,
-        prenet_d_config=None,
-        postnet_c_config=None,
-        postnet_d_config=None,
-        shared_hidden_dim=1024,
+        input_dim=1024,          # SONAR embedding dim
+        hidden_dim=2048,         # internal model dim, shared between all layers in both towers
         **kwargs
     ):
         super().__init__(**kwargs)
-        self.contextualizer_config = contextualizer_config or ContextualizerConfig()
-        self.denoiser_config = denoiser_config or DenoiserConfig()
-        self.prenet_c_config = prenet_c_config or PreNetCConfig()
-        self.prenet_d_config = prenet_d_config or PreNetDConfig()
-        self.postnet_c_config = postnet_c_config or PostNetCConfig()
-        self.postnet_d_config = postnet_d_config or PostNetDConfig()
-        self.shared_hidden_dim = shared_hidden_dim
+
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+
+        self.contextualizer_config = ContextualizerConfig(hidden_size=hidden_dim)
+        self.denoiser_config = DenoiserConfig(hidden_size=hidden_dim)
+        self.prenet_c_config = PreNetCConfig(in_dim=input_dim, out_dim=hidden_dim)
+        self.prenet_d_config = PreNetDConfig(in_dim=input_dim, out_dim=hidden_dim)
+        self.postnet_c_config = PostNetCConfig(in_dim=hidden_dim, out_dim=input_dim)
+        self.postnet_d_config = PostNetDConfig(in_dim=hidden_dim, out_dim=input_dim)

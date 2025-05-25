@@ -5,7 +5,7 @@ from LexaLCM.LCM.Models.Architecture_LCM import LexaLCMModel
 def Main():
     # 🔧 Set up dummy config
     config = LexaLCMConfig(
-        shared_hidden_dim=1024  # This should match SONAR embedding dim for now
+        #hidden_dim=1024  # This should match SONAR embedding dim for now
     )
 
     # 🧠 Create dummy input (e.g., batch of 2 sentences, each with 10 tokens of 1024-dim SONAR embeddings)
@@ -22,6 +22,16 @@ def Main():
 
     # 🧬 Initialize model with empty modules
     model = LexaLCMModel(config)
+
+    if True: # Print the model's dimensions
+        print("🔍 Shared hidden dim =", model.config.hidden_dim)
+        print("→ Input dim =", model.config.input_dim)
+        print(f"→ PreNetC dimensions = {model.config.prenet_c_config.in_dim} -> {model.config.prenet_c_config.out_dim}")
+        print(f"→ Contextualizer dimensions = {model.config.contextualizer_config.hidden_size}")
+        print(f"→ PostNetC dimensions = {model.config.postnet_c_config.in_dim} -> {model.config.postnet_c_config.out_dim}")
+        print(f"→ PreNetD dimensions = {model.config.prenet_d_config.in_dim} -> {model.config.prenet_d_config.out_dim}")
+        print(f"→ Denoiser dimensions = {model.config.denoiser_config.hidden_size}")
+        print(f"→ PostNetD dimensions = {model.config.postnet_d_config.in_dim} -> {model.config.postnet_d_config.out_dim}")
 
     # 🖥️ Move to device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
