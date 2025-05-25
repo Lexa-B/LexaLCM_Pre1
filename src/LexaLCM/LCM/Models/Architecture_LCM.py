@@ -1,13 +1,35 @@
-# Models/Architecture_LCM.py
+# LexaLCM/LCM/Models/Architecture_LCM.py
 
-from transformers import PretrainedConfig
+from transformers import PreTrainedModel
+from LexaLCM.LCM.Models.Configuration_LexaLCM import LexaLCMConfig
+from LexaLCM.LCM.Models.Contextualizer.Contextualizer import Contextualizer
+from LexaLCM.LCM.Models.Denoiser.Denoiser import Denoiser
+from LexaLCM.LCM.Models.PreNet_C.PreNet_C import PreNetC
+from LexaLCM.LCM.Models.PreNet_D.PreNet_D import PreNetD
+from LexaLCM.LCM.Models.PostNet_C.PostNet_C import PostNetC
+from LexaLCM.LCM.Models.PostNet_D.PostNet_D import PostNetD
 
-class LexaLCMConfig(PretrainedConfig):
-    model_type = "lexalcm"
+class LexaLCMModel(PreTrainedModel):
+    config_class = LexaLCMConfig
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        # Define your custom configuration parameters here
+    def __init__(self, config):
+        super().__init__(config)
+        self.prenet_c = PreNetC(config.prenet_c_config)
+        self.contextualizer = Contextualizer(config.contextualizer_config)
+        self.postnet_c = PostNetC(config.postnet_c_config)
+        self.prenet_d = PreNetD(config.prenet_d_config)
+        self.denoiser = Denoiser(config.denoiser_config)
+        self.postnet_d = PostNetD(config.postnet_d_config)
+
+    def forward(self, inputs, **kwargs):
+        x_c = self.prenet_c(inputs)
+        context = self.contextualizer(x_c)
+        output_c = self.postnet_c(context)
+        x_d = self.prenet_d(inputs)
+        denoised = self.denoiser(x_d, context, **kwargs)
+        output_d = self.postnet_d(denoised)
+        return output_d
+
 
 
 
