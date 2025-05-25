@@ -8,7 +8,7 @@ def Main():
         #hidden_dim=1024  # This should match SONAR embedding dim for now
     )
 
-    # 🧠 Create dummy input (e.g., batch of 2 sentences, each with 10 tokens of 1024-dim SONAR embeddings)
+    # 🧠 Create dummy input (e.g., batch of 2 texts, each with 10 sentences of 1024-dim SONAR embeddings)
     batch_size = 2
     seq_len = 10
     embed_dim = 1024

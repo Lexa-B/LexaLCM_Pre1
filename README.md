@@ -47,6 +47,9 @@ and in this example, the dataset is called "wikipedia_data_50k" and is located i
 
 
 
+
+
+
 ### Verify the embeddings
 
 ```bash
