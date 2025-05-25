@@ -10,12 +10,17 @@ class SonarDataset(Dataset):
         self.text_column = text_column
         self.index = []
 
-        files = sorted(glob.glob(os.path.join(data_dir, "*.parquet")))
+        # Point to the correct split directory (e.g., data_dir/train/)
+        split_dir = os.path.join(data_dir, split)
+        files = sorted(glob.glob(os.path.join(split_dir, "*.parquet")))
+
         for path in files:
-            df = pd.read_parquet(path, columns=["split"])
-            matching = df["split"] == split
-            indices = matching[matching].index.tolist()
-            self.index.extend([(path, i) for i in indices])
+            try:
+                df = pd.read_parquet(path, columns=[text_column])
+                for i in range(len(df)):
+                    self.index.append((path, i))
+            except Exception as e:
+                print(f"⚠️ Skipping file {path}: {e}")
 
         print(f"📂 Indexed {len(self.index)} {split} samples from {len(files)} files")
 
@@ -28,14 +33,12 @@ class SonarDataset(Dataset):
         row = df.iloc[row_idx][self.text_column]
 
         try:
-            arr = np.array(row, dtype=np.float32)
+            arr = np.stack([np.array(vec, dtype=np.float32) for vec in row])
             if len(arr.shape) != 2:
-                raise ValueError(f"Invalid shape: {arr.shape}")
+                raise ValueError(f"Expected 2D embedding array, got: {arr.shape}")
+            if arr.shape[1] != 1024:
+                raise ValueError(f"Expected embedding dimension: 1024, got: {arr.shape[1]}")
             return torch.tensor(arr)
         except Exception as e:
             print(f"❌ Skipping corrupted embedding at {path}:{row_idx} → {e}")
-            # Return a dummy tensor so training doesn’t crash
             return torch.zeros((1, 1024), dtype=torch.float32)
-
-
-

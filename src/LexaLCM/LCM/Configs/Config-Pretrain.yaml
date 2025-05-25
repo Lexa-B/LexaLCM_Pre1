@@ -15,6 +15,7 @@ model:
   max_position_embeddings: 4096     # Needed for RoPE cache length
 
 training:
+  num_denoising_steps: 100 # The denoiser tower runs 100 times, (the contextualizer tower runs only once).
   max_steps: 20000
   warmup_steps: 500
   max_grad_norm: 1.0
@@ -29,8 +30,11 @@ training:
   checkpoint_dir: ./checkpoints
   # resume_from: ./checkpoints/checkpoint_step_5000.pt # Uncomment to resume from a checkpoint
 
+inference:
+  num_denoising_steps: 40 # The denoiser tower runs 40 times, (the contextualizer tower runs only once).
+
 data:
-  data_dir: /home/lexa/DevProjects/_Models/LexaLCM_Pre1/src/LexaLCM/Content/Datasets/Wikipedia_Ja
+  data_dir: /home/lexa/DevProjects/_Models/LexaLCM_Pre1/src/LexaLCM/Content/Datasets/Wikipedia_Ja_100
   text_column: text_sentences_sonar_emb
   train_split: train
   val_split: validation

@@ -128,29 +128,26 @@ class RoPETransformerEncoderLayer(nn.Module):
 class TwoTowerLCM(nn.Module):
     def __init__(self, config):
         super().__init__()
+
+        self.num_denoising_steps = config.get('num_denoising_steps', 100)
+        self.hidden_size = config['hidden_size']
+
         # Input projection for SONAR input: force FP32
         self.input_proj = nn.Linear(config['input_dim'], config['hidden_size']).to(torch.float32)
 
-        # Contextualizer stack
-        self.contextualizer = nn.ModuleList([
-            RoPETransformerEncoderLayer(config)
-            for _ in range(config['num_contextualizer_layers'])
-        ])
-        # Denoiser stack
-        self.denoiser = nn.ModuleList([
-            RoPETransformerEncoderLayer(config)
-            for _ in range(config['num_denoiser_layers'])
-        ])
-    
+        # Timestep MLP
         self.timestep_mlp = nn.Sequential(
             nn.Linear(config['hidden_size'], config['hidden_size']),
             nn.SiLU(),
             nn.Linear(config['hidden_size'], config['hidden_size'])
         )
+        # Contextualizer stack
         self.contextualizer = nn.ModuleList([
             RoPETransformerEncoderLayer(config)
             for _ in range(config['num_contextualizer_layers'])
         ])
+
+        # Denoiser stack (with AdaLN)
         self.denoiser = nn.ModuleList([
             RoPETransformerEncoderLayer(
                 config,
@@ -164,16 +161,46 @@ class TwoTowerLCM(nn.Module):
         with torch.amp.autocast(device_type='cuda', enabled=False):
             x = self.input_proj(x.float())  # always do input proj in FP32
 
-        # Contextualizer (in autocast/bf16 context)
-        for layer in self.contextualizer:
+        # # Contextualizer (in autocast/bf16 context)
+        # for layer in self.contextualizer:
+        #     x = layer(x, mask=attention_mask)
+
+        # timestep_emb = self.timestep_mlp(timestep) if timestep is not None else torch.zeros(x.shape[0], x.shape[-1], device=x.device)
+
+        # # Denoiser
+        # for t in range(self.num_denoising_steps):
+        #     timestep_tensor = torch.full((x.shape[0], 1), t, dtype=torch.float32, device=x.device)
+        #     timestep_emb = self.timestep_mlp(timestep_tensor)  # [B, H]
+
+        #     h = x
+        #     for layer in self.denoiser:
+        #         h = layer(h, mask=attention_mask, timestep_emb=timestep_emb)
+
+        #     x = h  # pass denoised output to next timestep
+
+        # return x
+
+        print(f"[Contextualizer] Starting with input shape: {x.shape}")
+
+        for i, layer in enumerate(self.contextualizer):
             x = layer(x, mask=attention_mask)
+        print(f"[Contextualizer] Done. Output shape: {x.shape}")
 
-        timestep_emb = self.timestep_mlp(timestep) if timestep is not None else torch.zeros(x.shape[0], x.shape[-1], device=x.device)
+        print(f"[Denoiser] Running {self.num_denoising_steps} denoising steps")
 
-        # Denoiser
-        for layer in self.denoiser:
-            x = layer(x, mask=attention_mask, timestep_emb=timestep_emb)
+        for t in range(self.num_denoising_steps):
+            timestep_tensor = torch.full((x.shape[0], self.hidden_size), t, dtype=torch.float32, device=x.device)
+            timestep_emb = self.timestep_mlp(timestep_tensor)
 
-        for layer in self.denoiser:
-            x = layer(x, mask=attention_mask, timestep_emb=timestep_emb)
+            print(f"  ⏱️ Step {t+1}/{self.num_denoising_steps}")
+
+            h = x
+            for j, layer in enumerate(self.denoiser):
+                h = layer(h, mask=attention_mask, timestep_emb=timestep_emb)
+                if j == 0:
+                    print(f"    └ Layer {j+1}: shape = {h.shape}")  # print only once per step
+
+            x = h
+
         return x
+

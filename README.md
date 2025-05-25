@@ -26,26 +26,56 @@ clear & uv run --extra gpu src/LexaLCM/LCM/Main.py --dry-run --verbose
 
 ## Dataset handling
 
-### Add train/val split column to the dataset
+If you have a dataset in the format of the Meta FAIR "Large Concept Models" paper, you can convert it to the LexaLCM format using the following command:
 
 ```bash
-uv run --extra data src/Scripts/add_train_val_split.py 
+clear & uv run --extra data src/Scripts/Data/ConvertMetaParquet.py -i src/_TEMP/DirtyDatasets/ -o src/LexaLCM/Content/Datasets/ -n wikipedia_data_50k
+```
+
+where:
+- `-i` is the path to the directory with the dataset
+- `-o` is the path to the directory to save the converted dataset
+- `-n` is the name of the dataset
+
+and in this example, the dataset is called "wikipedia_data_50k" and is located in the directory `src/_TEMP/DirtyDatasets/`. The converted dataset will be saved in the directory `src/LexaLCM/Content/Datasets/` (the default dataset directory for the LexaLCM).
+
+
+
+
+
+
+
+
+
+### Verify the embeddings
+
+```bash
+uv run --extra data src/Scripts/Data/VerifyEmbeddings.py 
 ```
 
 where:
 - `-d` is the path to the parquet files
-- `-v` is the validation ratio
-- `-s` is the seed
 
 For example:
 ```bash
-clear & uv run --extra data --extra gpu src/Scripts/add_train_val_split.py -d src/LexaLCM/Content/Datasets/Wikipedia_Ja
+clear & uv run --extra data src/Scripts/Data/VerifyEmbeddings.py -d src/LexaLCM/Content/Datasets/Wikipedia_Ja
 ```
+
+### Convert the dataset to the LexaLCM format
+
+```bash
+uv run --extra data src/Scripts/Data/ConvertMetaParquet.py
+```
+
+where:
+- `-d` is the path to the parquet files
+
+
 
 ### Visualize the dataset
 
 ```bash
-uv run --extra data src/Scripts/VisualizeDataset.py 
+uv run --extra data src/Scripts/Data/VisualizeDataset.py 
 ```
 
 Where:
@@ -55,5 +85,5 @@ Where:
 
 For example:
 ```bash
-clear & uv run --extra data src/Scripts/VisualizeDataset.py -b 20 -d src/LexaLCM/Content/Datasets/Wikipedia_Ja
+clear & uv run --extra data src/Scripts/Data/VisualizeDataset.py -b 20 -d src/LexaLCM/Content/Datasets/Wikipedia_Ja
 ```
