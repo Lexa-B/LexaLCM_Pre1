@@ -1,4 +1,3 @@
-* Huggingface modular transformers
 * Two-tower Latent Diffusion LCM
   * Contextualizer tower (Transformer-style encoder)
     * Causal self-attention with rotary positional encoding (RoPE)

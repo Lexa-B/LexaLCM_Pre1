@@ -40,6 +40,7 @@ class VisualizeWikipedia:
         text_lengths = []
         sentence_counts = []
         date_counts = {}
+        sentence_lengths = []
 
         # Process files in batches
         start_time = time.time()
@@ -52,9 +53,15 @@ class VisualizeWikipedia:
                 total_rows += len(batch_df)
                 
                 if 'text_sentences' in batch_df.columns:
-                    batch_sentence_counts = batch_df['text_sentences'].apply(len)
+                    batch_sentence_lists = batch_df['text_sentences'].dropna()
+                    batch_sentence_counts = batch_sentence_lists.apply(len)
                     total_sentences += batch_sentence_counts.sum()
                     sentence_counts.extend(batch_sentence_counts.tolist())
+
+                    # Flatten and get sentence lengths
+                    for sentence_list in batch_sentence_lists:
+                        sentence_lengths.extend([len(s) for s in sentence_list if isinstance(s, str)])
+
                 
                 if 'text' in batch_df.columns:
                     text_lengths.extend(batch_df['text'].str.len().tolist())
@@ -94,40 +101,47 @@ class VisualizeWikipedia:
         gc.collect()
 
         # Create visualizations
-        plt.figure(figsize=(15, 10))
+        fig, axes = plt.subplots(2, 2, figsize=(24, 12))  # 2 rows, 2 columns
+        axes = axes.flatten()  # Flatten the 2x2 array for easier indexing
 
-        # 1. Sentence count distribution
-        if sentence_counts:
-            plt.subplot(2, 2, 3)
-            sns.histplot(data=sentence_counts, bins=range(0, 1001, 10))
-            plt.title('Distribution of Sentence Counts')
-            plt.xlabel('Sentence Count')
-            plt.ylabel('Count')
-            plt.xlim(0, 1000)
-
-        # 2. Text length distribution
+        # 1. Text length distribution
         if text_lengths:
-            plt.subplot(2, 2, 1)
-            sns.histplot(data=text_lengths, bins=range(0, 30001, 250))
-            plt.title('Distribution of Text Lengths')
-            plt.xlabel('Text Length')
-            plt.ylabel('Count')
-            plt.xlim(0, 30000)
+            sns.histplot(data=text_lengths, bins=range(0, 30001, 250), ax=axes[0])
+            axes[0].set_title('Text Lengths')
+            axes[0].set_xlabel('Characters')
+            axes[0].set_ylabel('Count')
+            axes[0].set_xlim(0, 30000)
 
-        # 3. If there's a timestamp column, show distribution over time
+        # 2. Article date distribution
         if date_counts:
-            plt.subplot(2, 2, 2)
             dates = sorted(date_counts.keys())
             counts = [date_counts[date] for date in dates]
-            plt.plot(dates, counts)
-            plt.title('Distribution of Articles Over Time')
-            plt.xlabel('Date')
-            plt.ylabel('Number of Articles')
-            plt.xticks(rotation=45)
+            axes[1].plot(dates, counts)
+            axes[1].set_title('Articles Over Time')
+            axes[1].set_xlabel('Date')
+            axes[1].set_ylabel('Count')
+            axes[1].tick_params(axis='x', rotation=45)
+
+        # 3. Sentence count per article
+        if sentence_counts:
+            sns.histplot(data=sentence_counts, bins=range(0, 1001, 10), ax=axes[2])
+            axes[2].set_title('Sentence Counts per Article')
+            axes[2].set_xlabel('Sentence Count')
+            axes[2].set_ylabel('Count')
+            axes[2].set_xlim(0, 1000)
+
+        # 4. Sentence length
+        if sentence_lengths:
+            sns.histplot(data=sentence_lengths, bins=range(0, 301, 2), ax=axes[3])
+            axes[3].set_title('Sentence Lengths')
+            axes[3].set_xlabel('Characters')
+            axes[3].set_ylabel('Count')
+            axes[3].set_xlim(0, 300)
 
         # Save the plot
         plt.tight_layout()
         plt.savefig('src/_TEMP/wikipedia_dataset_visualization.png')
+
         print("\nVisualization saved as 'wikipedia_dataset_visualization.png'")
 
         # Display basic statistics
@@ -143,6 +157,11 @@ class VisualizeWikipedia:
             print(f"Sentence count - Min: {min(sentence_counts):,}, Max: {max(sentence_counts):,}")
             print(f"Sentence count - 25th percentile: {np.percentile(sentence_counts, 25):.2f}")
             print(f"Sentence count - 75th percentile: {np.percentile(sentence_counts, 75):.2f}")
+        if sentence_lengths:
+            print(f"\nSentence length - Mean: {np.mean(sentence_lengths):.2f}, Median: {np.median(sentence_lengths):.2f}")
+            print(f"Sentence length - Min: {min(sentence_lengths):,}, Max: {max(sentence_lengths):,}")
+            print(f"Sentence length - 25th percentile: {np.percentile(sentence_lengths, 25):.2f}")
+            print(f"Sentence length - 75th percentile: {np.percentile(sentence_lengths, 75):.2f}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Visualize Wikipedia dataset")

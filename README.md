@@ -17,11 +17,28 @@ uv pip install -e ".[gpu]" # install the dependencies (gpu)... if you want to in
 
 ## Training
 
-### Dry run (sanity check)
+### Dry run (sanity check) ## ToDo: fix this
 ```bash
-clear & uv run --extra gpu src/LexaLCM/LCM/Main.py --dry-run --verbose
+# clear & uv run --extra gpu src/LexaLCM/LCM/Main.py --dry-run --verbose
 ```
 
+### Run the training
+```bash
+clear & uv run --extra gpu -m src.LexaLCM.Main
+```
+
+
+## Testing
+
+### Test the model
+```bash
+clear & uv run --extra gpu pytest Tests/TestModel.py
+```
+
+### Test the data pipeline
+```bash
+clear & uv run --extra gpu pytest Tests/TestData.py
+```
 
 
 ## Dataset handling
@@ -38,6 +55,9 @@ where:
 - `-n` is the name of the dataset
 
 and in this example, the dataset is called "wikipedia_data_50k" and is located in the directory `src/_TEMP/DirtyDatasets/`. The converted dataset will be saved in the directory `src/LexaLCM/Content/Datasets/` (the default dataset directory for the LexaLCM).
+
+
+
 
 
 
@@ -87,3 +107,15 @@ For example:
 ```bash
 clear & uv run --extra data src/Scripts/Data/VisualizeDataset.py -b 20 -d src/LexaLCM/Content/Datasets/Wikipedia_Ja
 ```
+
+
+
+
+## Bootstrap the model
+
+```bash
+clear & uv run --extra gpu src/LexaLCM/LCM/Utils/BootstrapLCM.py
+```
+
+
+
