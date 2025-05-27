@@ -17,11 +17,28 @@ uv pip install -e ".[gpu]" # install the dependencies (gpu)... if you want to in
 
 ## Training
 
-### Dry run (sanity check)
+### Dry run (sanity check) ## ToDo: fix this
 ```bash
-clear & uv run --extra gpu src/LexaLCM/LCM/Main.py --dry-run --verbose
+# clear & uv run --extra gpu src/LexaLCM/LCM/Main.py --dry-run --verbose
 ```
 
+### Run the training
+```bash
+clear & uv run --extra gpu -m src.LexaLCM.Main
+```
+
+
+## Testing
+
+### Test the model
+```bash
+clear & uv run --extra gpu pytest Tests/TestModel.py
+```
+
+### Test the data pipeline
+```bash
+clear & uv run --extra gpu pytest Tests/TestData.py
+```
 
 
 ## Dataset handling

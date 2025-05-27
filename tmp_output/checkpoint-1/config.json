@@ -1,0 +1,11 @@
+{
+  "architectures": [
+    "LexaLCM"
+  ],
+  "d_latent": 1024,
+  "d_model": 2048,
+  "input_dim": 1024,
+  "model_type": "lexa_lcm_pre1",
+  "torch_dtype": "float32",
+  "transformers_version": "4.51.3"
+}
