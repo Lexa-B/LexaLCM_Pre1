@@ -105,7 +105,10 @@ ENV/
 src/LexaLCM/Content/Datasets/
 
 # Checkpoints
-src/LexaLCM/LCM/checkpoints/
+src/LexaLCM/Checkpoints/
+
+# tmp_output
+tmp_output/
 
 # WandB
 wandb/
