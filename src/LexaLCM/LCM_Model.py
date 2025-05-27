@@ -9,8 +9,12 @@ from torch.amp import autocast
 from transformers import PreTrainedModel, MODEL_MAPPING
 from LexaLCM.LCM_Config import LexaLCMConfig
 
+# ToDo: make this a global variable that can be set to True/False from the command line
 Verbose = True
 
+## ------------------------------------------------------------
+## Helper Layers
+## ------------------------------------------------------------
 
 class NormalizeInput(nn.Module): # ToDo: add input normalization as per the Meta FAIR paper
     def __init__(self, d_model: int):
@@ -24,13 +28,17 @@ class RMSNorm(nn.Module):
     def __init__(self, d_model: int, eps: float = 1e-8):
         super().__init__()
         self.eps = eps
-        self.weight = nn.Parameter(torch.ones(d_model))  # learnable scaling
+        self.weight = nn.Parameter(torch.ones(d_model))  # starts as float32
 
     def forward(self, x):
-        # Calculate root mean square: sqrt(mean(x_i^2))
+        # If needed, cast weight to x's dtype and device for safe mixed precision
+        weight = self.weight.to(dtype=x.dtype, device=x.device)
+        
+        # Compute root mean square
         rms = x.pow(2).mean(dim=-1, keepdim=True).sqrt()
-        # Normalize and scale
-        return self.weight * (x / (rms + self.eps))
+
+        return weight * (x / (rms + self.eps))
+
     
 class ResidualConnection(nn.Module):
     def __init__(self, features: int, dropout: float):
@@ -56,86 +64,79 @@ class FeedForward_SwiGLU(nn.Module):
         x_drop = self.dropout(x_act)
         return self.linear2(x_drop)
     
-def apply_rope_to(q, k):
-    # q, k: (batch, heads, seq, dim)
-    seq_len = q.shape[2]
-    dim = q.shape[-1]
-    device = q.device
+# RoPE-related functions and storage
+def generate_sin_cos(seq_len, dim, device):
+    half_dim = dim // 2
+    inv_freq = 1.0 / (10000 ** (torch.arange(0, half_dim, device=device).float() / half_dim))
+    positions = torch.arange(seq_len, device=device).float()
+    sinusoid_inp = torch.einsum("i,j->ij", positions, inv_freq)
+    sin = torch.sin(sinusoid_inp)
+    cos = torch.cos(sinusoid_inp)
+    sin = torch.cat([sin, sin], dim=-1)  # expand to full dim
+    cos = torch.cat([cos, cos], dim=-1)
+    sin = sin.to(torch.float32)
+    cos = cos.to(torch.float32)
+    if Verbose:
+        if sin.dtype != torch.float32 or cos.dtype != torch.float32:
+            print(f"[WARN] RoPE sin/cos dtype not float32! sin: {sin.dtype}, cos: {cos.dtype}")
+        else:
+            print(f"[DEBUG - model] RoPE sin/cos dtype: {sin.dtype}, {cos.dtype}")
+    return sin.unsqueeze(0), cos.unsqueeze(0)  # [1, seq_len, dim]
 
-    # Create RoPE frequencies
-    position = torch.arange(seq_len, device=device).unsqueeze(1)
-    dim_idx = torch.arange(0, dim, 2, device=device)
-    inv_freq = 1.0 / (10000 ** (dim_idx / dim))
-    freqs = position * inv_freq  # (seq, dim/2)
+def rotate(x):
+    x1 = x[..., ::2]  # even dims
+    x2 = x[..., 1::2]  # odd dims
+    return torch.stack([-x2, x1], dim=-1).reshape_as(x)
 
-    sin = freqs.sin().unsqueeze(0).unsqueeze(0)  # (1, 1, seq, dim/2)
-    cos = freqs.cos().unsqueeze(0).unsqueeze(0)
+def apply_rope_to(q, k, sin, cos):
+    # Ensure sin/cos are same dtype and shape as q/k
+    sin = sin[:, :q.shape[1], :].to(dtype=q.dtype, device=q.device)
+    cos = cos[:, :q.shape[1], :].to(dtype=q.dtype, device=q.device)
+    q_rot = q * cos + rotate(q) * sin
+    k_rot = k * cos + rotate(k) * sin
+    return q_rot, k_rot
 
-    def rotate(x):
-        x1 = x[..., 0::2]
-        x2 = x[..., 1::2]
-        x_rot = torch.stack([
-            x1 * cos - x2 * sin,
-            x2 * cos + x1 * sin
-        ], dim=-1)
-        return x_rot.flatten(-2)
-
-    return rotate(q), rotate(k)
-
-def causal_mask(seq_len: int, device):
-    return torch.tril(torch.ones((1, 1, seq_len, seq_len), device=device)).bool()
+def causal_mask(size, device):
+    return torch.tril(torch.ones(size, size, device=device)).unsqueeze(0).unsqueeze(0)
     
-class MultiHeadAttentionBlock(nn.Module):
+## Attention Blocks
 
+class MultiHeadAttentionBlock(nn.Module):
     def __init__(self, d_model: int, h: int, dropout: float) -> None:
         super().__init__()
-        self.d_model = d_model # Embedding vector size
-        self.h = h # Number of heads
-        # Make sure d_model is divisible by h
+        self.d_model = d_model
+        self.h = h
         assert d_model % h == 0, "d_model is not divisible by h"
+        self.d_k = d_model // h
 
-        self.d_k = d_model // h # Dimension of vector seen by each head
-        self.w_q = nn.Linear(d_model, d_model, bias=False) # Wq
-        self.w_k = nn.Linear(d_model, d_model, bias=False) # Wk
-        self.w_v = nn.Linear(d_model, d_model, bias=False) # Wv
-        self.w_o = nn.Linear(d_model, d_model, bias=False) # Wo
+        self.w_q = nn.Linear(d_model, d_model, bias=False)
+        self.w_k = nn.Linear(d_model, d_model, bias=False)
+        self.w_v = nn.Linear(d_model, d_model, bias=False)
+        self.w_o = nn.Linear(d_model, d_model, bias=False)
         self.dropout = nn.Dropout(dropout)
 
     @staticmethod
     def attention(query, key, value, mask, dropout: nn.Dropout):
         d_k = query.shape[-1]
-        # Just apply the formula from the paper
-        # (batch, h, seq, d_k) --> (batch, h, seq, seq)
         attention_scores = (query @ key.transpose(-2, -1)) / math.sqrt(d_k)
         if mask is not None:
-            # Write a very low value (indicating -inf) to the positions where mask == 0
             attention_scores.masked_fill_(mask == 0, -1e9)
-        attention_scores = attention_scores.softmax(dim=-1) # (batch, h, seq, seq) # Apply softmax
+        attention_scores = attention_scores.softmax(dim=-1)
         if dropout is not None:
             attention_scores = dropout(attention_scores)
-        # (batch, h, seq, seq) --> (batch, h, seq, d_k)
-        # return attention scores which can be used for visualization
         return (attention_scores @ value), attention_scores
 
     def forward(self, q, k, v, mask):
-        query = self.w_q(q) # (batch, seq, d_model) --> (batch, seq, d_model)
-        key = self.w_k(k) # (batch, seq, d_model) --> (batch, seq, d_model)
-        value = self.w_v(v) # (batch, seq, d_model) --> (batch, seq, d_model)
+        query = self.w_q(q)
+        key = self.w_k(k)
+        value = self.w_v(v)
 
-        # (batch, seq, d_model) --> (batch, seq, h, d_k) --> (batch, h, seq, d_k)
         query = query.view(query.shape[0], query.shape[1], self.h, self.d_k).transpose(1, 2)
         key = key.view(key.shape[0], key.shape[1], self.h, self.d_k).transpose(1, 2)
         value = value.view(value.shape[0], value.shape[1], self.h, self.d_k).transpose(1, 2)
 
-        # Calculate attention
         x, self.attention_scores = MultiHeadAttentionBlock.attention(query, key, value, mask, self.dropout)
-        
-        # Combine all the heads together
-        # (batch, h, seq, d_k) --> (batch, seq, h, d_k) --> (batch, seq, d_model)
         x = x.transpose(1, 2).contiguous().view(x.shape[0], -1, self.h * self.d_k)
-
-        # Multiply by Wo
-        # (batch, seq, d_model) --> (batch, seq, d_model)  
         return self.w_o(x)
 
 class GeneralAttention(nn.Module):
@@ -146,9 +147,12 @@ class GeneralAttention(nn.Module):
 
     def forward(self, q, k, v, mask=None):
         if self.use_rope:
-            q, k = apply_rope_to(q, k)
+            sin, cos = generate_sin_cos(seq_len=q.size(1), dim=q.size(-1), device=q.device)
+            q, k = apply_rope_to(q, k, sin, cos)
+            if Verbose:
+                print(f"[DEBUG - model] RoPE sin/cos dtype in attention block: {sin.dtype}, {cos.dtype}")
         return self.core(q, k, v, mask)
-    
+
 class ContextualSelfAttention(nn.Module):
     def __init__(self, d_model, n_heads, dropout):
         super().__init__()
@@ -175,6 +179,112 @@ class DenoiserCrossAttention(nn.Module):
     def forward(self, x, context):
         return self.attn(x, context, context)
 
+## ------------------------------------------------------------
+## Main Layers
+## ------------------------------------------------------------
+
+## PreNets and PostNets
+
+class PreNetC(nn.Module):
+    def __init__(self, in_dim, out_dim):
+        super().__init__()
+        self.norm = nn.LayerNorm(in_dim)
+        self.proj = nn.Linear(in_dim, out_dim)
+        self.act = nn.SiLU()
+
+    def forward(self, x):
+        x = self.norm(x)
+        x = self.proj(x)
+        x = self.act(x)
+        return x
+
+class PostNetC(nn.Module):
+    def __init__(self, in_dim, out_dim):
+        super().__init__()
+        self.proj = nn.Linear(in_dim, out_dim)
+
+    def forward(self, x):
+        return self.proj(x)
+
+class PreNetD(nn.Module):
+    def __init__(self, in_dim, out_dim):
+        super().__init__()
+        self.norm = nn.LayerNorm(in_dim)
+        self.proj = nn.Linear(in_dim, out_dim)
+        self.act = nn.SiLU()
+
+    def forward(self, x):
+        x = self.norm(x)
+        x = self.proj(x)
+        x = self.act(x)
+        return x
+
+class PostNetD(nn.Module):
+    def __init__(self, in_dim, out_dim):
+        super().__init__()
+        self.proj = nn.Linear(in_dim, out_dim)
+
+    def forward(self, x):
+        return self.proj(x)
+
+## Contextualizer Tower
+
+class ContextualizerLayer(nn.Module):
+    def __init__(self, d_model: int, n_heads: int, d_ff: int, dropout: float):
+        super().__init__()
+        self.self_attention = ContextualSelfAttention(d_model, n_heads, dropout)
+        self.feed_forward = FeedForward_SwiGLU(d_model, d_ff, dropout)
+
+        self.residual_connections = nn.ModuleList([
+            ResidualConnection(d_model, dropout),
+            ResidualConnection(d_model, dropout)
+        ])
+
+    def forward(self, x):
+        x = self.residual_connections[0](x, self.self_attention)
+        x = self.residual_connections[1](x, self.feed_forward)
+        return x
+
+class ContextualizerTower(nn.Module):
+    def __init__(self, num_layers: int, d_model: int, n_heads: int, d_ff: int, dropout: float):
+        super().__init__()
+        self.layers = nn.ModuleList([
+            ContextualizerLayer(d_model, n_heads, d_ff, dropout)
+            for _ in range(num_layers)
+        ])
+        self.norm = RMSNorm(d_model)  # Final norm layer (post-residual stack)
+
+    def forward(self, x):
+        for i, layer in enumerate(self.layers):
+            if Verbose:
+                print(f"[DEBUG - model] Before ContextualizerLayer {i}: dtype = {x.dtype}")
+            x = layer(x)
+            if Verbose:
+                print(f"[DEBUG - model] After ContextualizerLayer {i}: dtype = {x.dtype}")
+        x = self.norm(x)
+        if Verbose:
+            print(f"[DEBUG - model] After ContextualizerTower norm (before dtype clamp): dtype = {x.dtype}")
+        x = x.to(torch.bfloat16) # Clamp back to bf16 bacause the fp32 RMS value causes it to be promoted to fp32
+        if Verbose:
+            print(f"[DEBUG - model] After ContextualizerTower norm: dtype = {x.dtype}")
+        return x
+
+## Latent Bridge
+
+class LatentBridge(nn.Module):
+    def __init__(self, d_model: int, dropout: float = 0.1):
+        super().__init__()
+        self.proj = nn.Sequential(
+            RMSNorm(d_model),
+            nn.Linear(d_model, d_model),
+            nn.GELU(),
+            nn.Dropout(dropout)
+        )
+
+    def forward(self, x):
+        return self.proj(x)
+
+## Denoiser Tower
 
 
 
@@ -189,100 +299,88 @@ class DenoiserCrossAttention(nn.Module):
 
 
 
+
+
+
+
+
+
+
+
+
+
+## ------------------------------------------------------------
+## LexaLCM Model's Main Architecture
+## ------------------------------------------------------------
 
 class LexaLCM(PreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
 
-        # PreNet - Contextualizer -> Normalize and map input SONAR embeddings to the model's hidden dimension. fp32 -> bf16
-        self.PreNet_C_Up = torch.nn.Linear(config.input_dim, config.d_model).to(torch.float32)
-        
-        # Contextualizer
-        self.Contextualizer_Across = torch.nn.Linear(config.d_model, config.d_model).to(torch.bfloat16)
-        
-        # # Contextualizer - RoPE. (fp32)
-        # self.Contextualizer_RoPE = torch.nn.Linear(config.d_latent, config.d_latent).to(torch.float32)
+        self.PreNet_C_Up = PreNetC(config.input_dim, config.d_model)
 
-        # PostNet - Contextualizer -> Normalize and reduce from the model's hidden dimension to the latent dimension.
-        self.PostNet_C_Down = torch.nn.Linear(config.d_model, config.d_latent).to(torch.bfloat16)
+        self.ContextualizerTower = ContextualizerTower(
+            num_layers=config.num_context_layers,
+            d_model=config.d_model,
+            n_heads=config.n_heads,
+            d_ff=config.d_ff,
+            dropout=config.dropout
+        )
 
-        # Latent Layer
-        self.Latent_Layer = torch.nn.Linear(config.d_latent, config.d_latent).to(torch.bfloat16)
+        self.PostNet_C_Down = PostNetC(config.d_model, config.d_latent)
 
-        # PreNet - Denoiser -> Normalize and map the latent dimension to the model's hidden dimension.
-        self.PreNet_D_Up = torch.nn.Linear(config.d_latent, config.d_model).to(torch.bfloat16)
+        self.LatentBridge = LatentBridge(config.d_latent, dropout=config.dropout)
 
-        # Denoiser
-        self.Denoiser_Across = torch.nn.Linear(config.d_model, config.d_model).to(torch.bfloat16)
+        self.PreNet_D_Up = PreNetD(config.d_latent, config.d_model)
 
-        # PostNet - Denoiser -> Normalize and reduce from the model's hidden dimension to the input dimension. bf16 -> fp32
-        self.PostNet_D_Down = torch.nn.Linear(config.d_model, config.input_dim).to(torch.float32)
+        self.Denoiser_Across = torch.nn.Linear(config.d_model, config.d_model)
+
+        self.PostNet_D_Down = PostNetD(config.d_model, config.input_dim)
 
     def forward(self, embeddings, labels=None):
-        # Input: [batch_size=1, seq_len=3, input_dim=1024]
         if Verbose:
             print(f"[DEBUG - model] embeddings: shape={embeddings.shape}, dtype={embeddings.dtype}")
-        #x = embeddings
 
-        # PreNet - Contextualizer
-        with autocast(device_type="cuda", enabled=False):
-            x = embeddings.to(torch.float32)
-            x = self.PreNet_C_Up(x)
+        x = self.PreNet_C_Up(embeddings)
         if Verbose:
             print(f"[DEBUG - model] after PreNet_C_Up: shape={x.shape}, dtype={x.dtype}")
-        x = x.to(torch.bfloat16)
 
-        # Contextualizer
+        x = self.ContextualizerTower(x)
         if Verbose:
-            print(f"[DEBUG - model] Contextualizer_Across: shape={x.shape}, dtype={x.dtype}")
-        x = self.Contextualizer_Across(x)
-        if Verbose:
-            print(f"[DEBUG - model] after Contextualizer_Across: shape={x.shape}, dtype={x.dtype}")
+            print(f"[DEBUG - model] after ContextualizerTower: shape={x.shape}, dtype={x.dtype}")
 
-        # PostNet - Contextualizer
-        if Verbose:
-            print(f"[DEBUG - model] PostNet_C_Down: shape={x.shape}, dtype={x.dtype}")
         x = self.PostNet_C_Down(x)
         if Verbose:
             print(f"[DEBUG - model] after PostNet_C_Down: shape={x.shape}, dtype={x.dtype}")
 
-        # Latent Layer
+        x = self.LatentBridge(x)
         if Verbose:
-            print(f"[DEBUG - model] Latent_Layer: shape={x.shape}, dtype={x.dtype}")
-        x = self.Latent_Layer(x)
-        if Verbose:
-            print(f"[DEBUG - model] after Latent_Layer: shape={x.shape}, dtype={x.dtype}")
+            print(f"[DEBUG - model] after LatentBridge: shape={x.shape}, dtype={x.dtype}")
 
-        # PreNet - Denoiser
-        if Verbose:
-            print(f"[DEBUG - model] PreNet_D_Up: shape={x.shape}, dtype={x.dtype}")
         x = self.PreNet_D_Up(x)
         if Verbose:
             print(f"[DEBUG - model] after PreNet_D_Up: shape={x.shape}, dtype={x.dtype}")
 
-        # Denoiser
-        if Verbose:
-            print(f"[DEBUG - model] Denoiser_Across: shape={x.shape}, dtype={x.dtype}")
         x = self.Denoiser_Across(x)
         if Verbose:
             print(f"[DEBUG - model] after Denoiser_Across: shape={x.shape}, dtype={x.dtype}")
-        
-        # PostNet - Denoiser
-        with autocast(device_type="cuda", enabled=False):  # Force out of AMP
+
+        with autocast(device_type="cuda", enabled=False):
             x = x.to(torch.float32)
             if Verbose:
                 print(f"[DEBUG - model] after to(float32) PostNet_D_Down: shape={x.shape}, dtype={x.dtype}")
-            x = self.PostNet_D_Down(x)  # fp32
+            x = self.PostNet_D_Down(x)
             if Verbose:
                 print(f"[DEBUG - model] after PostNet_D_Down: shape={x.shape}, dtype={x.dtype}")
-        x = x.squeeze(1)  # remove sequence dimension to get [batch_size=1, input_dim]
+
+        x = x.squeeze(1)
         if Verbose:
             print(f"[DEBUG - model] final output: shape={x.shape}, dtype={x.dtype}")
-        
+
         loss = None
         if labels is not None:
             loss = torch.mean((x - labels) ** 2)
-        
+
         return {"loss": loss, "logits": x}
 
 MODEL_MAPPING.register(LexaLCMConfig, LexaLCM)
