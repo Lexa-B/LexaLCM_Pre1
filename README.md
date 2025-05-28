@@ -1,7 +1,9 @@
-# LexaLCM Pre1 xxxM Pre-trained Large Concept Model
-A pre-trained LCM model with xxxM parameters roughly based on Meta FAIR's Two-Tower Diffusion LCM architecture, but in HF Transformers.
+# LexaLCM Pre1 400M is a Pre-trained Two-Tower Latent Diffusion Large Concept Model.
+It is a pre-trained LCM with 394,900,736 parameters mostly based on Meta FAIR's Two-Tower Diffusion LCM architecture, but in HF Transformers.
 
 [[Paper]](https://ai.meta.com/research/publications/large-concept-models-language-modeling-in-a-sentence-representation-space/)
+
+The first version is being trained on a dataset of 1.4M Japanese and English Wikipedia articles that have been pre-segmented and concept-embedded. Segmentation was performed using SaT capped at 250 characters/segment and embedded was performed with SONAR.
 
 ## Installation
 
