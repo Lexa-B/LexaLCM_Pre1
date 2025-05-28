@@ -3,7 +3,8 @@ It is a pre-trained LCM with 394,900,736 parameters mostly based on Meta FAIR's 
 
 [[Paper]](https://ai.meta.com/research/publications/large-concept-models-language-modeling-in-a-sentence-representation-space/)
 
-The first version is being trained on a dataset of 1.4M Japanese and English Wikipedia articles that have been pre-segmented and concept-embedded. Segmentation was performed using SaT capped at 250 characters/segment and embedded was performed with SONAR.
+The first version is being trained on a dataset of 2.4M Japanese and English Wikipedia articles that have been pre-segmented and concept-embedded. Segmentation was performed using SaT capped at 250 characters/segment and embedded was performed with SONAR.
+[[Dataset]](https://huggingface.co/datasets/Lexa-B/LexaLCM_Datasets)
 
 ## Installation
 
