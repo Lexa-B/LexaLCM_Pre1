@@ -45,27 +45,34 @@ clear & uv run --extra gpu pytest Tests/TestData.py
 ## Special Concepts
 These sentences are the equivalent of special tokens in an LLM. They're a quirk of continuous concept embedding space that the model exists within; because there is no discrete separation of tokens, all special signifiers must coinhabit the same 1024D concept embedding spaces as the normal sentences to be translated. there is no separation.
 ### Start of Text
-Japanese:
+日本語：
+
 English:
 `[[Start of text.]]`
 ### End of Text
-Japanese: 
+日本語：
+
 English:
 `[[End of text.]]`
 ### Pad
-Japanese:
+日本語：
+
 English:
 ### System
-Japanese:
+日本語：
+
 English:
 ### Tool
-Japanese:
+日本語：
+
 English:
 ### AI
-Japanese:
+日本語：
+
 English:
 ### User
-Japanese:
+日本語：
+
 English:
 ## Dataset handling
 
