@@ -27,12 +27,12 @@ uv pip install -e ".[gpu]" # install the dependencies (gpu)... if you want to in
 
 ## AIの事前学習手順 ｜ Training
 
-### Dry run (sanity check) ## ToDo: fix this
+### 事前テストを実行する ｜ Dry run (sanity check) ## ToDo: fix this
 ```bash
 # clear & uv run --extra gpu src/LexaLCM/LCM/Main.py --dry-run --verbose
 ```
 
-### Run the training
+### 事前学習手順を始める ｜ Run the training
 ```bash
 clear & uv run --extra gpu -m src.LexaLCM.Main
 ```
