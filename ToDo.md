@@ -27,3 +27,9 @@
 
 
 
+
+
+
+* PreNet and PostNet
+  * PreNet: Normalizes and maps input SONAR embeddings to the model's hidden dimension.
+  * PostNet: Denormalizes the output and maps it back to the SONAR embedding dimension.
