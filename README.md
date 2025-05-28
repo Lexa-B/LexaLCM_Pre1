@@ -1,4 +1,4 @@
-# LexaLCM-Pre1-400M Pre-trained Two-Tower Latent Diffusion Large Concept Model
+# LexaLCM-Pre1-400M Two-Tower Latent Diffusion Large Concept Model
 It is a pre-trained LCM with 394,900,736 parameters mostly based on Meta FAIR's Two-Tower Diffusion LCM architecture, but in HF Transformers.
 
 [[Paper]](https://ai.meta.com/research/publications/large-concept-models-language-modeling-in-a-sentence-representation-space/)
