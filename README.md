@@ -11,7 +11,7 @@ It is a pre-trained LCM with 394,900,736 parameters mostly based on Meta FAIR's 
 The first version is being trained on a dataset of 2.4M Japanese and English Wikipedia articles that have been pre-segmented and concept-embedded. Segmentation was performed using SaT capped at 250 characters/segment and embedded was performed with SONAR.
 [[Dataset]](https://huggingface.co/datasets/Lexa-B/LexaLCM_Datasets)
 
-## Installation
+## インストール手順 ｜ Installation
 
 ```bash
 uv venv # create a new virtual environment
@@ -23,7 +23,7 @@ uv pip install -e ".[gpu]" # install the dependencies (gpu)... if you want to in
 
 
 
-## Training
+## AIの事前学習手順 ｜ Training
 
 ### Dry run (sanity check) ## ToDo: fix this
 ```bash
