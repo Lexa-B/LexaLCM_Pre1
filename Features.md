@@ -1,19 +1,23 @@
 * Two-tower Latent Diffusion LCM
   * Contextualizer tower (Transformer-style encoder)
     * Causal self-attention with rotary positional encoding (RoPE)
-      * RoPE is fused into the attention mechanism to encode positional information
+      * RoPE is fused into the attention mechanism (no separate RoPE layer)
     * Fixed embeddings
       * Source: Pretrained SONAR encoder (Sentence-level Multimodal and Language-Agnostic Representations)
       * Dimensions: 1024-dimensional, 32-bit floating point (fp32) vectors
       * Note: Embeddings are fixed during LCM training and not updated.
     * SwiGLU activation
     * RMSNorm
-    * NO MLP
   * Denoiser tower
     * Cross-attention 
       * Dropout: Applied at a rate of 0.15 during training
       * Function: Integrates contextual information from the Contextualizer tower to guide the denoising process
       * Implementation: Utilizes standard Transformer cross-attention mechanisms
+    * Classifier-free guidance
+      * Guidance scale (gscale) = 3.0
+      * Guidance rescaling (grescale) = 0.7
+      * Initial noise scale (σinit) = 0.6
+      * Epsilon-scaling (λeps) = 1.00045
     * NO positional encoding
       * (no RoPE)
       * (relies solely on timestep embeddings)
@@ -24,7 +28,7 @@
     * Timestep embedding
       * Type: 256-dimensional sinusoidal embeddings
       * Purpose: Encodes the diffusion timestep information, crucial for the denoising process
-    * Two-layer MLP with SiLU activation
+      * Two-layer MLP with SiLU activation
     * Gaussian noise generator (for denoising process)
     * Default cosine noise schedule
       * Type: Cosine schedule with T=100 steps (as per Nichol & Dhariwal, 2021)
@@ -32,10 +36,6 @@
     * Denoising steps: 
       * 100 (training)
       * 40 (inference)
-    * Guidance scale (gscale) = 3.0 (for classifier-free guidance)
-    * Guidance rescaling (grescale) = 0.7 (prevents overexposure)
-    * Initial noise scale (σinit) = 0.6
-    * Epsilon-scaling (λeps) = 1.00045
   * Sharred hidden dimension
     * Both towers operate within the same hidden dimensional space, facilitating seamless information flow between them.
   * Transformer layers, each incorporating attention mechanisms and feed-forward networks.
