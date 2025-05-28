@@ -1,10 +1,12 @@
 # LexaLCM-Pre1-400M Two-Tower Latent Diffusion Large Concept Model
 これは、Meta FAIRのTwo-Tower Diffusion LCMアーキテクチャを主に基にした、394,900,736個のパラメータを持つ事前学習済みのLCMで、Hugging Face Transformersで実装されています。
+
 [[Meta FAIRのLCMの研究論文（英語）]](https://ai.meta.com/research/publications/large-concept-models-language-modeling-in-a-sentence-representation-space/)
 
 It is a pre-trained LCM with 394,900,736 parameters mostly based on Meta FAIR's Two-Tower Diffusion LCM architecture, but in Hugging FaceTransformers.
 
 [[Meta FAIR's LCM Paper]](https://ai.meta.com/research/publications/large-concept-models-language-modeling-in-a-sentence-representation-space/)
+
 最初のバージョンは、事前にセグメント化およびコンセプト埋め込みが行われた240万件の日本語および英語のWikipedia記事を用いて学習されています。セグメント化は、1セグメントあたり最大250文字に制限されたSaTを使用して行われ、埋め込みにはSONARが使用されました。
 [[データセット]](https://huggingface.co/datasets/Lexa-B/LexaLCM_Datasets)
 
