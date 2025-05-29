@@ -5,14 +5,14 @@ training:
   max_steps: 250000
   warmup_steps: 500
   max_grad_norm: 1.0
-  eval_every: 500
+  eval_every: 0
   batch_size: 16
-  learning_rate: 0.00001
+  learning_rate: 0.00002
   weight_decay: 0.01
   bf16: true
   max_seq_len: 128  # Truncate sequences that are longer than this *after* adding SoT and EoT
   output_dir: ./outputs
-  save_every: 500
+  save_every: 250
   checkpoint_dir: ./checkpoints
   resume_from: None # Set to True or specify a specific filename to resume from a checkpoint (e.g. ./checkpoints/checkpoint_step_5000.pt)
 
@@ -25,4 +25,4 @@ data:
 wandb:
   project: LexaLCM_Pre1
   run_name: lcm_run_002
-  log_every: 1
+  log_every: 10

@@ -46,21 +46,28 @@ def RunTraining(config_training, model, train_dataset, val_dataset=None, dry_run
     # Ensure save steps is a multiple of eval steps
     eval_steps = config_training['training']['eval_every']
     save_steps = config_training['training']['save_every']
-    if save_steps % eval_steps != 0:
-        # Round up to next multiple of eval_steps
-        save_steps = ((save_steps // eval_steps) + 1) * eval_steps
-        print(f"⚠️ Adjusted save_steps from {config_training['training']['save_every']} to {save_steps} to be a multiple of eval_steps ({eval_steps})")
+
+    if eval_steps == 0:
+        print("⚠️ Evaluation is disabled.")
+        save_steps = save_steps  # no adjustment necessary
+    else:
+        if save_steps % eval_steps != 0:
+            save_steps = ((save_steps // eval_steps) + 1) * eval_steps
+            print(f"⚠️ Adjusted save_steps to {save_steps} to be a multiple of eval_steps ({eval_steps})")
+
+    evaluation_strategy = "no" if eval_steps == 0 else "steps"
+    load_best_model = evaluation_strategy != "no"
 
     training_args = TrainingArguments(
         output_dir=config_training['training']['output_dir'],
-        per_device_train_batch_size=1 if dry_run else config_training['training']['batch_size'],
+        per_device_train_batch_size=config_training['training']['batch_size'],
         bf16=config_training['training']['bf16'],
-        max_steps=1 if dry_run else config_training['training']['max_steps'],
-        logging_steps=config_training['wandb']['log_every'],  # Log every step
-        logging_first_step=True,  # Log the first step
-        logging_dir="./logs",  # Directory for storing logs
-        eval_strategy="no" if dry_run else "steps",
-        eval_steps=None if dry_run else eval_steps,
+        max_steps=config_training['training']['max_steps'],
+        logging_steps=config_training['wandb']['log_every'],
+        logging_first_step=True,
+        logging_dir="./logs",
+        eval_strategy=evaluation_strategy,
+        eval_steps=None if evaluation_strategy == "no" else eval_steps,
         save_steps=save_steps,
         learning_rate=config_training['training']['learning_rate'],
         weight_decay=config_training['training']['weight_decay'],
@@ -68,10 +75,10 @@ def RunTraining(config_training, model, train_dataset, val_dataset=None, dry_run
         max_grad_norm=config_training['training']['max_grad_norm'],
         run_name=config_training['wandb']['run_name'],
         remove_unused_columns=False,
-        report_to="wandb",  # Enable wandb reporting
-        load_best_model_at_end=True,  # Load the best model at the end of training
-        metric_for_best_model="eval_loss",  # Use eval_loss to determine the best model
-        greater_is_better=False,  # Lower loss is better
+        report_to="wandb",
+        load_best_model_at_end=load_best_model,
+        metric_for_best_model="eval_loss" if load_best_model else None,
+        greater_is_better=False if load_best_model else None,
     )
 
     trainer = Trainer(
@@ -82,6 +89,33 @@ def RunTraining(config_training, model, train_dataset, val_dataset=None, dry_run
         data_collator=LCMCollator(),
         compute_metrics=compute_metrics,  # Add compute_metrics function
     )
+
+    train_dataloader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=config_training['training']['batch_size'],
+        shuffle=True,
+        num_workers=4,  # try increasing this
+        collate_fn=LCMCollator()
+    )
+
+    eval_dataloader = torch.utils.data.DataLoader(
+        val_dataset,
+        batch_size=config_training['training']['batch_size'],
+        shuffle=False,
+        num_workers=2,
+        collate_fn=LCMCollator()
+    )
+
+    # Pass these directly instead of relying on Trainer's default
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=None,  # leave None here
+        eval_dataset=None,
+        compute_metrics=compute_metrics,
+    )
+    trainer.get_train_dataloader = lambda: train_dataloader
+    trainer.get_eval_dataloader = lambda eval_dataset=None: eval_dataloader
     trainer.add_callback(NaNGradChecker())
 
     print("\n🚀 Starting training...")
@@ -147,7 +181,8 @@ def Main():
         data_dir=data_conf["data_dir"],
         split=data_conf["val_split"],
         text_column=data_conf["text_column"],
-        max_seq_len=max_len
+        max_seq_len=max_len,
+        sample_size=500
     )
 
     RunTraining(config_training, model, train_dataset, val_dataset, dry_run=False)

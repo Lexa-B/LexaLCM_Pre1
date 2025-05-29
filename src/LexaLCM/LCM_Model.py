@@ -349,6 +349,7 @@ class DenoiserCrossAttention(nn.Module):
         causal_and_padding_mask = causal_mask * padding_mask.unsqueeze(1).unsqueeze(2) # Combine the causal and padding masks to ensure the model doesn't attend to either future or padding tokens
 
         # 5. Apply Row-Level CFG Dropout
+        full_mask = causal_and_padding_mask  # default fallback mask
         if training and dropout_denoiser > 0.0:
             keep_mask = (torch.rand(context.size(0), context.size(1), device=context.device) > dropout_denoiser).float()
             keep_mask[:, 0] = 1.0
