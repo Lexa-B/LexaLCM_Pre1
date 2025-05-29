@@ -10,3 +10,4 @@ class NaNGradChecker(TrainerCallback):
                     print(f"🚨 NaN in gradient of {name}")
                 elif torch.isinf(p.grad).any():
                     print(f"🚨 Inf in gradient of {name}")
+                    

@@ -11,7 +11,7 @@ import numpy as np
 import pyarrow.parquet as pq
 
 class LCMDataset(Dataset):
-    def __init__(self, data_dir, split, text_column, max_seq_len=None, cache_size=10):
+    def __init__(self, data_dir, split, text_column, max_seq_len=None, cache_size=10, sample_size=None):
         self.text_column = text_column
         self.max_seq_len = max_seq_len
         self.cache_size = cache_size  # Number of files to keep in memory
@@ -19,6 +19,7 @@ class LCMDataset(Dataset):
         self.file_paths = []  # Just store file paths
         self.file_sizes = {}  # Store file sizes for length calculation
         self.total_samples = 0
+        self.indices = []
 
         # Load SoT and EoT once
         with safe_open("src/LexaLCM/Data/SpecialConcepts/StartOfText.safetensors", framework="pt") as f:
@@ -49,6 +50,12 @@ class LCMDataset(Dataset):
                 self.total_samples += len(df)
         
         print(f"📊 Total samples: {self.total_samples:,}")
+ 
+        if sample_size and sample_size < self.total_samples:
+            print(f"🎲 Sampling {sample_size} out of {self.total_samples} total samples.")
+            self.indices = np.random.choice(self.total_samples, sample_size, replace=False).tolist()
+        else:
+            self.indices = list(range(self.total_samples))
 
     def _get_file_and_row(self, idx):
         """Convert global index to file and row index"""
@@ -80,12 +87,12 @@ class LCMDataset(Dataset):
         return df
 
     def __len__(self):
-        return self.total_samples
+        return len(self.indices)
 
     def __getitem__(self, idx):
-        path, row_idx = self._get_file_and_row(idx)
+        actual_idx = self.indices[idx]  # use the sampled index
+        path, row_idx = self._get_file_and_row(actual_idx)
         
-        # Load file into cache if needed
         df = self._load_file(path)
         row = df.iloc[row_idx][self.text_column]
 
@@ -109,7 +116,7 @@ class LCMDataset(Dataset):
 
             return {
                 "embeddings": tensor,
-                "labels": tensor[-1]  # Optional: adjust if you want last non-pad token
+                "labels": tensor[-1]
             }
 
         except Exception as e:
@@ -119,6 +126,7 @@ class LCMDataset(Dataset):
                 "embeddings": zero_tensor,
                 "labels": zero_tensor.squeeze(0)
             }
+
 
 class LCMDataset_DryRun(Dataset):
     def __init__(self):
