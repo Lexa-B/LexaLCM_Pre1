@@ -7,11 +7,13 @@ description = "LCM: Large Concept Model an architecture using a higher-level sem
 dependencies = [
     "accelerate>=1.7.0",
     "pytest>=8.3.5",
-#    "bitsandbytes>=0.45.5",
+    #    "bitsandbytes>=0.45.5",
     "numpy>=2.2.6",
     "pandas>=2.2.3",
     "sentencepiece>=0.2.0",
     "wandb>=0.19.11",
+    "torchinfo>=1.8.0",
+    "pyarrow>=20.0.0",
 ]
 
 classifiers = [
