@@ -29,12 +29,12 @@ uv pip install -e ".[gpu]" # install the dependencies (gpu)... if you want to in
 
 ### 事前テストを実行する ｜ Dry run (sanity check) ## ToDo: fix this
 ```bash
-# clear & uv run --extra gpu src/LexaLCM/LCM/Main.py --dry-run --verbose
+clear & uv run --extra gpu -m src.LexaLCM.Main --dry-run --verbose
 ```
 
 ### 事前学習手順を始める ｜ Run the training
 ```bash
-clear & uv run --extra gpu -m src.LexaLCM.Main
+clear & uv run --extra gpu -m src.LexaLCM.Main -v
 ```
 
 

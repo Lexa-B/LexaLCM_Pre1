@@ -107,8 +107,8 @@ src/LexaLCM/Content/Datasets/
 # Checkpoints
 src/LexaLCM/Checkpoints/
 
-# tmp_output
-tmp_output/
+# Output
+outputs/
 
 # WandB
 wandb/

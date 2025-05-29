@@ -2,17 +2,16 @@
 
 ## Critical
 
-- [ ] make sure the contextualizer runs once, but all the 100/40 denoiser layer iterations run
-- [ ] add a gaussian noise generator to the denoiser
-- [ ] make sure the contextualizer uses causal self-attention
-- [ ] make sure the denoiser uses cross-attention
+- [ ] Cosine noise generator for the denoiser
 
 ## High
 
-- [ ] make sure the AdaLN timestep modulation works in tandem with cross-attention
+- [ ] PreNet: Normalizes and centers the input embeddings
+- [ ] PostNet: Denormalizes the output and shifts it back to the SONAR embedding space by the noralizer's original offset.
 
 ## Medium
 
+- [ ] Make all causal masks bool. They're currently Float32.
 - [ ] make sure its AdamW
 - [ ] Exponential Moving Average (EMA) for weight stabilization during training or inference
 
@@ -31,5 +30,5 @@
 
 
 * PreNet and PostNet
-  * PreNet: Normalizes and maps input SONAR embeddings to the model's hidden dimension.
+  * 
   * PostNet: Denormalizes the output and maps it back to the SONAR embedding dimension.

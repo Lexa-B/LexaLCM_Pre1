@@ -7,18 +7,19 @@ class LexaLCMConfig(PretrainedConfig):
     def __init__(
         self,
         input_dim=1024,
-        d_model=2048,
+        d_model=1536, # 2048 is the default for Meta FAIR's LCM, but you can use 1536 for a smaller model
         d_latent=1024,
-        num_context_layers=5,
-        num_denoiser_layers=13,
-        n_heads=16,
-        d_ff=8192,
+        num_context_layers=3, # 5 is the default for Meta FAIR's LCM, but you can use less for a significantly smaller model
+        num_denoiser_layers=4, # 13 is the default for Meta FAIR's LCM, but you can use less for a significantly smaller model
+        n_heads=16, # 16 is the default for Meta FAIR's LCM, but you can use 8 for a slightly lighter model
+        d_ff=6144, # 8192 (* 4) is the default for SwiGLU, but you can use 6144 ( * 3) for a smaller model
         dropout_context=0.1,
         dropout_latent=0.1,
         dropout_denoiser=0.15,
         denoiser_iterations_pretrain = 100,
         denoiser_iterations_inference = 40,
         AdaLN_Timestep_Embed_Dim = 256,
+        cfg_scale = 0.0, # Classifier-Free Guidance Scale
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -35,5 +36,6 @@ class LexaLCMConfig(PretrainedConfig):
         self.denoiser_iterations_pretrain = denoiser_iterations_pretrain
         self.denoiser_iterations_inference = denoiser_iterations_inference
         self.AdaLN_Timestep_Embed_Dim = AdaLN_Timestep_Embed_Dim
+        self.cfg_scale = cfg_scale
 
 CONFIG_MAPPING.register("lexa_lcm_pre1", LexaLCMConfig)

@@ -9,8 +9,10 @@ from torch.amp import autocast
 from transformers import PreTrainedModel, MODEL_MAPPING
 from LexaLCM.LCM_Config import LexaLCMConfig
 
-# ToDo: make this a global variable that can be set to True/False from the command line
-Verbose = True
+# ToDo: make these global variables that can be set to True/False from the command line
+Verbose_Model = False
+Verbose_Contextualizer = False
+Verbose_Denoiser = False
 
 ## ------------------------------------------------------------
 ## Helper Layers
@@ -32,7 +34,7 @@ class RMSNorm(nn.Module):
 
     def forward(self, x):
 
-        if Verbose:
+        if Verbose_Model:
             print(f"[DEBUG - model] RMSNorm Input dtype: x = {x.dtype}")
 
         # If needed, cast weight to x's dtype and device for safe mixed precision
@@ -41,7 +43,7 @@ class RMSNorm(nn.Module):
         # Compute root mean square
         rms = x.pow(2).mean(dim=-1, keepdim=True).sqrt()
 
-        if Verbose:
+        if Verbose_Model:
             print(f"[DEBUG - model] RMSNorm Output dtype: x = {x.dtype}, rms = {rms.dtype}")
 
         return weight * (x / (rms + self.eps))
@@ -87,7 +89,8 @@ class AdaLNModulator(nn.Module):
         for layer in self.ff:
             if isinstance(layer, nn.Linear):
                 nn.init.zeros_(layer.weight)
-                nn.init.zeros_(layer.bias)
+                # nn.init.zeros_(layer.bias) Adjusted this to try and fight the exploding gradient problem
+                nn.init.normal_(layer.weight, mean=0.0, std=1e-3)
 
     def forward(self, t_emb):
         return self.ff(t_emb).chunk(3, dim=-1)  # returns γ, β, α
@@ -112,13 +115,13 @@ class FeedForward_SwiGLU(nn.Module):
         self.linear2 = nn.Linear(d_ff, d_model)
 
     def forward(self, x):
-        if Verbose:
+        if Verbose_Model:
             print(f"[DEBUG - model] FeedForward_SwiGLU Input dtype: x = {x.dtype}")
         x_proj = self.linear1(x)  # shape: (batch, seq, d_ff * 2)
         x_gated, x_linear = x_proj.chunk(2, dim=-1)  # Split into two halves
         x_act = F.silu(x_gated) * x_linear           # SwiGLU activation
         x_drop = self.dropout(x_act)
-        if Verbose:
+        if Verbose_Model:
             print(f"[DEBUG - model] FeedForward_SwiGLU Output dtype: x_drop = {x_drop.dtype}")
         return self.linear2(x_drop)
 
@@ -132,7 +135,7 @@ class FeedForward_AdaLN(nn.Module):
 
     def forward(self, x, t_emb):
 
-        if Verbose:
+        if Verbose_Model:
             print(f"[DEBUG - model] FeedForward_AdaLN Input dtype: x = {x.dtype}")
 
         # Step 1: Compute modulation params
@@ -149,8 +152,9 @@ class FeedForward_AdaLN(nn.Module):
         x_gated, x_linear = x_proj.chunk(2, dim=-1)
         x_act = F.silu(x_gated) * x_linear
         x_out = self.linear2(self.dropout(x_act))
+        x_out = torch.clamp(x_out, min=-5.0, max=5.0) # Clamp the output to -5.0 to 5.0 to prevent the exploding gradient problem
 
-        if Verbose:
+        if Verbose_Model:
             print(f"[DEBUG - model] FeedForward_AdaLN Output dtype: x = {x.dtype}, α = {α.dtype}, x_out = {x_out.dtype}")
 
         # Step 4: Residual with AdaLN α gate
@@ -169,7 +173,7 @@ def generate_sin_cos(seq_len, dim, device):
     cos = torch.cat([cos, cos], dim=-1)
     sin = sin.to(torch.float32)
     cos = cos.to(torch.float32)
-    if Verbose:
+    if Verbose_Model:
         if sin.dtype != torch.float32 or cos.dtype != torch.float32:
             print(f"[WARN] RoPE sin/cos dtype not float32! sin: {sin.dtype}, cos: {cos.dtype}")
         else:
@@ -189,7 +193,7 @@ def apply_rope_to(q, k, sin, cos):
     k_rot = k * cos + rotate(k) * sin
     return q_rot, k_rot
 
-def causal_mask(size, device):
+def build_causal_mask(size, device):
     return torch.tril(torch.ones(size, size, device=device)).unsqueeze(0).unsqueeze(0)
 
 ## Attention Blocks
@@ -242,22 +246,26 @@ class GeneralAttention(nn.Module):
         if self.use_rope:
             sin, cos = generate_sin_cos(seq_len=q.size(1), dim=q.size(-1), device=q.device)
             q, k = apply_rope_to(q, k, sin, cos)
-            if Verbose:
-                print(f"[DEBUG - model] RoPE sin/cos dtype in attention block: {sin.dtype}, {cos.dtype}")
+            if Verbose_Model:
+                print(f"[DEBUG - Attention-RoPE] RoPE sin/cos dtype in attention block: {sin.dtype}, {cos.dtype}")
         return self.core(q, k, v, mask)
 
-class ContextualSelfAttention(nn.Module):
+class ContextualizerSelfAttention(nn.Module):
     def __init__(self, d_model, n_heads, dropout):
         super().__init__()
         self.attn = GeneralAttention(d_model, n_heads, dropout, use_rope=True)
 
     def forward(self, x):
-        if Verbose:
-            print(f"[DEBUG - model] ContextualSelfAttention Input dtype: x = {x.dtype}")
-        mask = causal_mask(x.shape[1], x.device)
-        if Verbose:
-            print(f"[DEBUG - model] ContextualSelfAttention Mask dtype: x = {x.dtype}, mask = {mask.dtype}")
-        return self.attn(x, x, x, mask)
+        if Verbose_Contextualizer:
+            print(f"[DEBUG - Attention-CxSA] ContextualSelfAttention Input dtype: x = {x.dtype}")
+        causal_mask = build_causal_mask(x.shape[1], x.device)
+        if Verbose_Contextualizer:
+            print(f"[DEBUG - Attention-CxSA] causal_mask dtype: {causal_mask.dtype}")
+            print(f"[DEBUG - Attention-CxSA] padding_mask dtype: {self.padding_mask.dtype}")
+        full_mask = causal_mask * self.padding_mask.unsqueeze(1).unsqueeze(2) # Combine the causal and padding masks to ensure the model doesn't attend to either future or padding tokens
+        if Verbose_Contextualizer:
+            print(f"[DEBUG - Attention-CxSA] ContextualSelfAttention Mask dtype: x = {x.dtype}, mask = {full_mask.dtype}")
+        return self.attn(x, x, x, full_mask)
 
 class DenoiserSelfAttention(nn.Module):
     def __init__(self, d_model, n_heads, dropout):
@@ -267,8 +275,8 @@ class DenoiserSelfAttention(nn.Module):
 
     def forward(self, x, t_emb):
 
-        if Verbose:
-            print(f"[DEBUG - model] DenoiserSelfAttention Input dtype: x = {x.dtype}")
+        if Verbose_Denoiser:
+            print(f"[DEBUG - Attention-DnSA] DenoiserSelfAttention Input dtype: x = {x.dtype}")
 
         # 1. Modulate input with AdaLN based on timestep
         γ, β, α = self.modulator(t_emb) # [batch, d_model] each
@@ -281,13 +289,17 @@ class DenoiserSelfAttention(nn.Module):
 
         # 3. Create causal mask [1, 1, seq_len, seq_len]
         seq_len = x.shape[1]
-        mask = torch.tril(torch.ones((seq_len, seq_len), device=x.device)).unsqueeze(0).unsqueeze(1)
+        causal_mask = torch.tril(torch.ones((seq_len, seq_len), device=x.device)).unsqueeze(0).unsqueeze(1)
+        if Verbose_Denoiser:
+            print(f"[DEBUG - Attention-DnSA] causal_mask dtype: {causal_mask.dtype}")
+            print(f"[DEBUG - Attention-DnSA] padding_mask dtype: {self.padding_mask.dtype}")
+        full_mask = causal_mask * self.padding_mask.unsqueeze(1).unsqueeze(2) # Combine the causal and padding masks to ensure the model doesn't attend to either future or padding tokens
 
         # 4. Run attention (Q = K = V = x_mod)
-        y = self.attn(x_mod, x_mod, x_mod, mask)
+        y = self.attn(x_mod, x_mod, x_mod, full_mask)
 
-        if Verbose:
-            print(f"[DEBUG - model] DenoiserSelfAttention Output dtype: x = {x.dtype}, α = {α.dtype}, y = {y.dtype}")
+        if Verbose_Denoiser:
+            print(f"[DEBUG - Attention-DSA] DenoiserSelfAttention Output dtype: x = {x.dtype}, α = {α.dtype}, y = {y.dtype}")
 
         # 5. Apply residual connection and scaling
         return x + α * y
@@ -300,8 +312,8 @@ class DenoiserCrossAttention(nn.Module):
 
     def forward(self, x, context, t_emb, *, dropout_denoiser=0.0, training=False):
 
-        if Verbose:
-            print(f"[DEBUG - model] DenoiserCrossAttention Input dtype: x = {x.dtype}")
+        if Verbose_Denoiser:
+            print(f"[DEBUG - Attention-DnCA] DenoiserCrossAttention Input dtype: x = {x.dtype}")
 
         # 1. Modulate input with AdaLN based on timestep
         γ, β, α = self.modulator(t_emb) # [batch, d_model] each
@@ -316,23 +328,38 @@ class DenoiserCrossAttention(nn.Module):
         zero = torch.zeros((context.size(0), 1, context.size(2)), device=context.device, dtype=context.dtype)
         context = torch.cat([zero, context], dim=1)
 
+        # 3.1 Prepend zero-vector to padding mask
+        padding_mask = self.padding_mask
+        padding_mask = torch.cat([
+            torch.ones((padding_mask.size(0), 1), dtype=padding_mask.dtype, device=padding_mask.device), 
+            padding_mask
+        ], dim=1)
+
+        if Verbose_Denoiser:
+            print(f"[DEBUG - Attention-DnCA] padded_mask shape: {padding_mask.shape}, dtype: {padding_mask.dtype}")
+            print(f"[DEBUG - Attention-DnCA] padded_mask[0, :10]: {padding_mask[0, :10]}")  # print first 10 for one sample
+
         # 4. Build causal mask for the context sequence
         seq_len_q = x_mod.size(1)
         seq_len_k = context.size(1)
         causal_mask = torch.tril(torch.ones((seq_len_q, seq_len_k), device=x.device)).unsqueeze(0).unsqueeze(1)
+        if Verbose_Denoiser:
+            print(f"[DEBUG - Attention-DnCA] causal_mask dtype: {causal_mask.dtype}")
+            print(f"[DEBUG - Attention-DnCA] padding_mask dtype: {padding_mask.dtype}")
+        causal_and_padding_mask = causal_mask * padding_mask.unsqueeze(1).unsqueeze(2) # Combine the causal and padding masks to ensure the model doesn't attend to either future or padding tokens
 
         # 5. Apply Row-Level CFG Dropout
         if training and dropout_denoiser > 0.0:
             keep_mask = (torch.rand(context.size(0), context.size(1), device=context.device) > dropout_denoiser).float()
             keep_mask[:, 0] = 1.0
             context = context * keep_mask.unsqueeze(-1)
-            causal_mask = causal_mask * keep_mask.unsqueeze(1).unsqueeze(2)
+            full_mask = causal_and_padding_mask * keep_mask.unsqueeze(1).unsqueeze(2) # Apply the keep_mask to the full_mask to add the CFG mask
 
         # 6. Run attention
-        y = self.attn(x_mod, context, context, causal_mask)
+        y = self.attn(x_mod, context, context, full_mask)
 
-        if Verbose:
-            print(f"[DEBUG - model] DenoiserCrossAttention Output dtype: x = {x.dtype}, α = {α.dtype}, y = {y.dtype}")
+        if Verbose_Denoiser:
+            print(f"[DEBUG - Attention-DCA] DenoiserCrossAttention Output dtype: x = {x.dtype}, α = {α.dtype}, y = {y.dtype}")
 
         # 7. Apply residual connection and scaling
         return x + α * y
@@ -391,7 +418,7 @@ class PostNetD(nn.Module):
 class ContextualizerLayer(nn.Module):
     def __init__(self, d_model: int, n_heads: int, d_ff: int, dropout: float):
         super().__init__()
-        self.self_attention = ContextualSelfAttention(d_model, n_heads, dropout)
+        self.self_attention = ContextualizerSelfAttention(d_model, n_heads, dropout)
         self.mlp = FeedForward_SwiGLU(d_model, d_ff, dropout)
 
         self.residual_connections = nn.ModuleList([
@@ -415,16 +442,16 @@ class ContextualizerTower(nn.Module):
 
     def forward(self, x):
         for i, layer in enumerate(self.layers):
-            if Verbose:
+            if Verbose_Model:
                 print(f"[DEBUG - model] Before ContextualizerLayer {i}: dtype = {x.dtype}")
             x = layer(x)
-            if Verbose:
+            if Verbose_Model:
                 print(f"[DEBUG - model] After ContextualizerLayer {i}: dtype = {x.dtype}")
         x = self.norm(x)
-        if Verbose:
+        if Verbose_Model:
             print(f"[DEBUG - model] After ContextualizerTower norm (before dtype clamp): dtype = {x.dtype}")
         x = x.to(torch.bfloat16) # Clamp back to bf16 bacause the fp32 RMS value causes it to be promoted to fp32
-        if Verbose:
+        if Verbose_Model:
             print(f"[DEBUG - model] After ContextualizerTower norm: dtype = {x.dtype}")
         return x
 
@@ -473,13 +500,39 @@ class DenoiserTower(nn.Module):
             for i, layer in enumerate(self.layers):
                 x = layer(x, context, timestep, dropout_denoiser=dropout_denoiser, training=training)
             x = self.final_norm(x)
-            if Verbose:
+            if Verbose_Model:
                 print(f"[DEBUG - model] After DenoiserTower norm (before dtype clamp): dtype = {x.dtype}")
             x = x.to(torch.bfloat16)
-            if Verbose:
+            if Verbose_Model:
                 print(f"[DEBUG - model] After DenoiserTower norm: dtype = {x.dtype}")
 
         return x
+
+## ------------------------------------------------------------
+## Loss Functions
+## ------------------------------------------------------------
+
+def l2_euclidean_loss_with_mask(
+        predicted: torch.Tensor,       # [B, T, D]
+        target: torch.Tensor,          # [B, D]
+        attention_mask: torch.Tensor   # [B, T]
+    ) -> torch.Tensor:
+    """
+    Computes average L2 (Euclidean) distance between predicted and target only
+    at the last non-masked token position.
+    """
+    if Verbose_Model:
+        print(f"[DEBUG - model] l2_euclidean_loss_with_mask: predicted.shape = {predicted.shape}, target.shape = {target.shape}, attention_mask.shape = {attention_mask.shape}")
+
+    # [B, D]: grab final predicted and ground truth token for each sequence
+    x_last = predicted[:, -1, :]  # [B, D]
+    y = target # [B, D]
+
+    # Compute L2 norm per sample, then average
+    l2 = torch.norm(x_last - y, dim=-1)  # [B]
+    return l2.mean()
+
+
 
 ## ------------------------------------------------------------
 ## LexaLCM Model's Main Architecture
@@ -489,6 +542,18 @@ class LexaLCM(PreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.config = config
+
+        # Precompute cosine schedule for denoising loop
+        max_denoising_steps = max(
+            config.denoiser_iterations_pretrain,
+            config.denoiser_iterations_inference
+        )
+        self.register_buffer(
+            "alpha_bar_schedule",
+            self._compute_cosine_schedule(max_denoising_steps)
+        )
+
+        # Create TimestepEmbedder for AdaLN
         self.TimestepEmbedder = TimestepEmbedder(t_emb_dim=config.AdaLN_Timestep_Embed_Dim, d_model=config.d_model)
 
         # Architecture
@@ -519,12 +584,33 @@ class LexaLCM(PreTrainedModel):
 
         self.PostNet_D_Down = PostNetD(config.d_model, config.input_dim)
 
-    def run_denoising_loop(self, latent_noise, context, *, training=False, dropout_denoiser=0.0):
+    def _compute_cosine_schedule(self, num_steps: int, s: float = 0.008):
+        """
+        Precompute the cosine noise schedule: alpha_bar[t] = cos^2( (t/T + s) / (1+s) * π/2 )
+        """
+        steps = torch.arange(num_steps + 1, dtype=torch.float64)  # T+1 values
+        f = (steps / num_steps + s) / (1 + s)
+        alpha_bar = torch.cos(f * math.pi / 2) ** 2
+
+        if Verbose_Model:
+            print(f"[DEBUG - model] alpha_bar[0] = {alpha_bar[0].item():.6f}")
+            print(f"[DEBUG - model] alpha_bar[-1] = {alpha_bar[-1].item():.6f}")
+
+        return alpha_bar.to(torch.float32)  # [T+1]
+
+    def run_denoising_loop(
+        self,
+        context,
+        *,
+        training=False,
+        dropout_denoiser=0.0,
+        cfg_scale: float = 0.0, # Classifier-Free Guidance Scale
+        uncond_context: torch.Tensor = None, # Unconditional context for CFG
+    ):
         """
         Perform iterative denoising using the DenoiserTower.
         
         Args:
-            latent_noise: [B, T, D] initial noisy latent input
             context: [B, T, D] fixed contextualizer output
             training: bool, whether we're training (affects # iterations and dropout)
             dropout_denoiser: float, optional dropout rate used during classifier-free guidance training
@@ -532,105 +618,158 @@ class LexaLCM(PreTrainedModel):
         Returns:
             denoised_latents: [B, T, D]
         """
-        x = latent_noise
+
+        x_0 = context.detach()  # Target latents (constant across timesteps)
+
         num_steps = (
             self.config.denoiser_iterations_pretrain if training 
             else self.config.denoiser_iterations_inference
         )
 
         for t in range(num_steps):
+            # 1. Get alpha_bar_t
+            alpha_bar = self.alpha_bar_schedule[t].to(x_0.dtype)
+            if Verbose_Model:
+                print(f"[DEBUG - model] ᾱ[{t}] = {alpha_bar.item():.6f}")
+
+            # 2. Sample new noise each step
+            epsilon = torch.randn_like(x_0)
+
+            # 3. Forward diffuse both mix x_0 and epsilon
+            x_t_cond = (alpha_bar.sqrt() * x_0 + (1 - alpha_bar).sqrt() * epsilon)
+
+            # 4. Embed timestep and denoise
             timestep = torch.full(
-                (x.shape[0], 1, 1),
+                (x_0.shape[0], 1, 1),
                 fill_value=t,
                 dtype=torch.float32,
-                device=x.device
+                device=x_0.device
             )
-            t_emb = self.TimestepEmbedder(timestep).to(x.dtype)  # [B, d_model], demote back to model dtype
+            t_emb = self.TimestepEmbedder(timestep).to(x_0.dtype)
 
-            x = self.DenoiserTower(
-                x,
-                context,
-                t_emb,
-                dropout_denoiser=dropout_denoiser,
-                training=training
-            )
+            if cfg_scale > 0.0 and not training: # If CFG is enabled and we're not training, we need to denoise both the conditional and unconditional contexts
+                x_t_uncond = (alpha_bar.sqrt() * uncond_context + (1 - alpha_bar).sqrt() * epsilon)
 
-            if Verbose:
+                x_cond = self.DenoiserTower(
+                    x_t_cond, 
+                    x_0, 
+                    t_emb,
+                    dropout_denoiser=0.0, training=False
+                )
+                x_uncond = self.DenoiserTower(
+                    x_t_uncond, uncond_context, t_emb,
+                    dropout_denoiser=0.0, training=False
+                )
+
+                # CFG interpolation
+                x = x_uncond + cfg_scale * (x_cond - x_uncond)
+
+            else:
+                # Training or no CFG
+                x = self.DenoiserTower(
+                    x_t_cond, 
+                    x_0,
+                    t_emb,
+                    dropout_denoiser=dropout_denoiser,
+                    training=training
+                )
+
+            if Verbose_Model:
                 print(f"[DEBUG - model] Denoising Loop #{t}")
 
         return x
 
-    def forward(self, embeddings, labels=None):
-        if Verbose:
+    def forward(self, embeddings, labels=None, attention_mask=None):
+        if Verbose_Model:
             print(f"[DEBUG - model] embeddings: shape={embeddings.shape}, dtype={embeddings.dtype}")
 
+        # Convert attention_mask [B, T] into boolean mask where True = keep, False = pad
+        padding_mask = attention_mask.bool() if attention_mask is not None else torch.ones_like(embeddings[:, :, 0]).bool()
+
+        # Assign padding mask to attention modules
+        for layer in self.ContextualizerTower.layers:
+            layer.self_attention.padding_mask = padding_mask
+
+        for layer in self.DenoiserTower.layers:
+            layer.self_attention.padding_mask = padding_mask
+            layer.cross_attention.padding_mask = padding_mask
+        
         # PreNet - Contextualizer Tower
 
         x = self.PreNet_C_Up(embeddings)
-        if Verbose:
+        if Verbose_Model:
             print(f"[DEBUG - model] after PreNet_C_Up: shape={x.shape}, dtype={x.dtype}")
 
         # Contextualizer Tower
 
         x = self.ContextualizerTower(x)
-        if Verbose:
+        if Verbose_Model:
             print(f"[DEBUG - model] after ContextualizerTower: shape={x.shape}, dtype={x.dtype}")
 
         # PostNet - Contextualizer Tower
 
         x = self.PostNet_C_Down(x)
-        if Verbose:
+        if Verbose_Model:
             print(f"[DEBUG - model] after PostNet_C_Down: shape={x.shape}, dtype={x.dtype}")
 
         # LatentBridge
 
         x = self.LatentBridge(x)
-        if Verbose:
+        if Verbose_Model:
             print(f"[DEBUG - model] after LatentBridge: shape={x.shape}, dtype={x.dtype}")
 
         # PreNet - DenoiserTower
 
         x = self.PreNet_D_Up(x)
-        if Verbose:
+        if Verbose_Model:
             print(f"[DEBUG - model] after PreNet_D_Up: shape={x.shape}, dtype={x.dtype}")
 
         # Denoising Loop
 
-        # 1. Project to denoiser input space (i.e., noise dimension)
+        # Project to denoiser input space (i.e., noise dimension)
         latent_context = x  # [B, T, D]
 
-        # 2. Create Gaussian noise matching shape of latent_context
-        latent_noise = torch.randn_like(latent_context)
+        # Create unconditional context for CFG if CFG is enabled and we're not training
+        uncond_context = None 
+        if not self.training and self.config.cfg_scale > 0.0:
+            # Create unconditional context by copying the first token of the conditional context
+            uncond_context = torch.zeros_like(latent_context)
+            uncond_context[:, 0, :] = latent_context[:, 0, :]
 
-        # 3. Denoise from noise → latents using contextual embedding
+        # Denoise from noise → latents using contextual embedding
         x = self.run_denoising_loop(
-            latent_noise,
             context=latent_context,
             training=self.training,
-            dropout_denoiser=self.config.dropout_denoiser
+            dropout_denoiser=self.config.dropout_denoiser,
+            cfg_scale=self.config.cfg_scale,
+            uncond_context=uncond_context,
         )
 
-        if Verbose:
+        if Verbose_Model:
             print(f"[DEBUG - model] after Denoising Loop: shape={x.shape}, dtype={x.dtype}")
 
         # PostNet - DenoiserTower
 
         with autocast(device_type="cuda", enabled=False):
             x = x.to(torch.float32)
-            if Verbose:
+            if Verbose_Model:
                 print(f"[DEBUG - model] after to(float32) PostNet_D_Down: shape={x.shape}, dtype={x.dtype}")
             x = self.PostNet_D_Down(x)
-            if Verbose:
+            if Verbose_Model:
                 print(f"[DEBUG - model] after PostNet_D_Down: shape={x.shape}, dtype={x.dtype}")
 
-        x = x.squeeze(1)
-        if Verbose:
+        if Verbose_Model:
             print(f"[DEBUG - model] final output: shape={x.shape}, dtype={x.dtype}")
 
-        loss = None
-        if labels is not None:
-            loss = torch.mean((x - labels) ** 2)
+        # Shape fix: model returns [B, D] but loss expects [B, T, D]
+        x = x.unsqueeze(1)           # [B, 1, D]
+        labels = labels.unsqueeze(1) # [B, 1, D]
+        attention_mask = torch.ones(x.shape[:2], dtype=torch.bool, device=x.device)  # [B, 1]
 
-        return {"loss": loss, "logits": x}
+        return {
+            "loss": l2_euclidean_loss_with_mask(x, labels, attention_mask),
+            "logits": x.squeeze(1),  # Optional: remove fake T dimension for outputs
+        }
+
 
 MODEL_MAPPING.register(LexaLCMConfig, LexaLCM)
