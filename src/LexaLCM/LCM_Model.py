@@ -152,7 +152,8 @@ class FeedForward_AdaLN(nn.Module):
         x_gated, x_linear = x_proj.chunk(2, dim=-1)
         x_act = F.silu(x_gated) * x_linear
         x_out = self.linear2(self.dropout(x_act))
-        x_out = torch.clamp(x_out, min=-5.0, max=5.0) # Clamp the output to -5.0 to 5.0 to prevent the exploding gradient problem
+        # x_out = torch.clamp(x_out, min=-5.0, max=5.0) # Clamp the output to -5.0 to 5.0 to prevent the exploding gradient problem
+        x_out = torch.tanh(x_out) * 5.0 # Scratch that, this is even more aggressive to fight the exploding gradients
 
         if Verbose_Model:
             print(f"[DEBUG - model] FeedForward_AdaLN Output dtype: x = {x.dtype}, α = {α.dtype}, x_out = {x_out.dtype}")
@@ -540,6 +541,7 @@ def l2_euclidean_loss_with_mask(
 ## ------------------------------------------------------------
 
 class LexaLCM(PreTrainedModel):
+    config_class = LexaLCMConfig
     def __init__(self, config):
         super().__init__(config)
         self.config = config
@@ -677,6 +679,9 @@ class LexaLCM(PreTrainedModel):
 
             if Verbose_Model:
                 print(f"[DEBUG - model] Denoising Loop #{t}")
+                if t % 10 == 0:
+                    print(f"[DEBUG - model] Denoising Loop step {t} ᾱ = {alpha_bar.item():.6f}")
+
 
         return x
 

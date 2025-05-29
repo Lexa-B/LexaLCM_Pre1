@@ -7,14 +7,14 @@ training:
   max_grad_norm: 1.0
   eval_every: 0
   batch_size: 16
-  learning_rate: 0.00002
+  learning_rate: 0.000005
   weight_decay: 0.01
   bf16: true
   max_seq_len: 128  # Truncate sequences that are longer than this *after* adding SoT and EoT
   output_dir: ./outputs
-  save_every: 250
+  save_every: 500
   checkpoint_dir: ./checkpoints
-  resume_from: None # Set to True or specify a specific filename to resume from a checkpoint (e.g. ./checkpoints/checkpoint_step_5000.pt)
+  resume_from: /home/lexa/DevProjects/_Models/LexaLCM_Pre1/outputs/checkpoint-1000/ # Set to True or specify a specific filename to resume from a checkpoint (e.g. ./checkpoints/checkpoint_step_5000.pt)
 
 data:
   data_dir: /home/lexa/DevProjects/_Data/LexaLCM_Datasets/src/Datasets/Wikipedia_Ja/
@@ -24,5 +24,5 @@ data:
 
 wandb:
   project: LexaLCM_Pre1
-  run_name: lcm_run_002
-  log_every: 10
+  run_name: lcm_run_004
+  log_every: 5

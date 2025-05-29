@@ -6,6 +6,7 @@ import wandb
 import torch
 import numpy as np
 import evaluate
+import os
 
 from LexaLCM.LCM_Config import LexaLCMConfig
 from LexaLCM.LCM_Model import LexaLCM
@@ -94,7 +95,7 @@ def RunTraining(config_training, model, train_dataset, val_dataset=None, dry_run
         train_dataset,
         batch_size=config_training['training']['batch_size'],
         shuffle=True,
-        num_workers=4,  # try increasing this
+        num_workers=16, # How many cpu cores to use for data loading
         collate_fn=LCMCollator()
     )
 
@@ -102,22 +103,13 @@ def RunTraining(config_training, model, train_dataset, val_dataset=None, dry_run
         val_dataset,
         batch_size=config_training['training']['batch_size'],
         shuffle=False,
-        num_workers=2,
+        num_workers=16, # How many cpu cores to use for data loading
         collate_fn=LCMCollator()
     )
 
-    # Pass these directly instead of relying on Trainer's default
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=None,  # leave None here
-        eval_dataset=None,
-        compute_metrics=compute_metrics,
-    )
     trainer.get_train_dataloader = lambda: train_dataloader
     trainer.get_eval_dataloader = lambda eval_dataset=None: eval_dataloader
     trainer.add_callback(NaNGradChecker())
-
     print("\n🚀 Starting training...")
     trainer.train(resume_from_checkpoint=None if dry_run else resume_from_checkpoint)
     print("✅ Training complete!")
@@ -154,8 +146,14 @@ def Main():
         )
 
     # Init Model
-    model_config = LexaLCMConfig()
-    model = LexaLCM(model_config)
+    resume_path = config_training["training"].get("resume_from", None)
+
+    if resume_path and os.path.exists(resume_path):
+        print(f"📦 Loading model weights from checkpoint: {resume_path}")
+        model = LexaLCM.from_pretrained(resume_path)
+    else:
+        model_config = LexaLCMConfig()
+        model = LexaLCM(model_config)
 
     # Dry Run
     if args.dry_run:
