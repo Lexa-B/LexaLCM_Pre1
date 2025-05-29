@@ -12,7 +12,9 @@ from LexaLCM.LCM_Config import LexaLCMConfig
 from LexaLCM.LCM_Model import LexaLCM
 from LexaLCM.Data.DataHandler import LCMDataset, LCMDataset_DryRun, LCMCollator
 from LexaLCM.Utils.NaNGradChecker import NaNGradChecker
-from transformers import Trainer, TrainingArguments
+from LexaLCM.Utils.LCMTrainer import LCMTrainer
+from transformers import TrainingArguments
+
 
 def count_trainable_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -70,32 +72,34 @@ def RunTraining(config_training, model, train_dataset, val_dataset=None, dry_run
         eval_strategy=evaluation_strategy,
         eval_steps=None if evaluation_strategy == "no" else eval_steps,
         save_steps=save_steps,
-        learning_rate=config_training['training']['learning_rate'],
+        learning_rate=None if config_training['training']['optimizer'].lower() == "adafactor" else config_training['training']['learning_rate'],
         weight_decay=config_training['training']['weight_decay'],
         warmup_steps=config_training['training']['warmup_steps'],
-        max_grad_norm=config_training['training']['max_grad_norm'],
         run_name=config_training['wandb']['run_name'],
         remove_unused_columns=False,
         report_to="wandb",
         load_best_model_at_end=load_best_model,
         metric_for_best_model="eval_loss" if load_best_model else None,
         greater_is_better=False if load_best_model else None,
+        max_grad_norm=config_training['training']['max_grad_norm'] if config_training['training']['optimizer'].lower() == "adamw" else None,
+        optim=config_training['training']['optimizer'].lower(),  # Pass "adamw" or "adafactor"
     )
 
-    trainer = Trainer(
+    trainer = LCMTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         data_collator=LCMCollator(),
         compute_metrics=compute_metrics,  # Add compute_metrics function
+        config_dict=config_training
     )
 
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config_training['training']['batch_size'],
         shuffle=True,
-        num_workers=16, # How many cpu cores to use for data loading
+        num_workers=20, # How many cpu cores to use for data loading
         collate_fn=LCMCollator()
     )
 
@@ -103,7 +107,7 @@ def RunTraining(config_training, model, train_dataset, val_dataset=None, dry_run
         val_dataset,
         batch_size=config_training['training']['batch_size'],
         shuffle=False,
-        num_workers=16, # How many cpu cores to use for data loading
+        num_workers=20, # How many cpu cores to use for data loading
         collate_fn=LCMCollator()
     )
 
@@ -130,7 +134,7 @@ def Main():
 
     # Load Config
     print("🔍 Loading config...")
-    config_path = 'src/LexaLCM/Config/Pretrain/Config_Pretrain_Pre1_001.yaml'
+    config_path = 'src/LexaLCM/Config/Pretrain/Config_Pretrain_Pre1.yaml'
     config_training = LoadConfig(config_path)
 
     if args.verbose:
