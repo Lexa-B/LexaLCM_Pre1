@@ -5,25 +5,24 @@ training:
   max_steps: 250000
   warmup_steps: 500
   max_grad_norm: 1.0
-  log_every: 50
-  eval_every: 1000
+  eval_every: 500
   batch_size: 16
-  learning_rate: 0.00002
+  learning_rate: 0.00001
   weight_decay: 0.01
   bf16: true
   max_seq_len: 128  # Truncate sequences that are longer than this *after* adding SoT and EoT
   output_dir: ./outputs
-  save_every: 400
+  save_every: 500
   checkpoint_dir: ./checkpoints
   resume_from: None # Set to True or specify a specific filename to resume from a checkpoint (e.g. ./checkpoints/checkpoint_step_5000.pt)
 
 data:
-  data_dir: /home/lexa/DevProjects/_Data/LexaLCM_Datasets/src/Datasets/Wikipedia_Ja_Small/
+  data_dir: /home/lexa/DevProjects/_Data/LexaLCM_Datasets/src/Datasets/Wikipedia_Ja/
   text_column: text_sentences_sonar_emb
   train_split: Train
   val_split: Val
 
 wandb:
   project: LexaLCM_Pre1
-  run_name: lcm_run_001
-  log_every: 5
+  run_name: lcm_run_002
+  log_every: 1

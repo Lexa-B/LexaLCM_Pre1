@@ -8,34 +8,17 @@ import os
 import glob
 import pandas as pd
 import numpy as np
+import pyarrow.parquet as pq
 
 class LCMDataset(Dataset):
-    def __init__(self, data_dir, split, text_column):
+    def __init__(self, data_dir, split, text_column, max_seq_len=None, cache_size=10):
         self.text_column = text_column
-        self.index = []
-
-        # Point to the correct split directory (e.g., data_dir/train/)
-        split_dir = os.path.join(data_dir, split)
-        files = sorted(glob.glob(os.path.join(split_dir, "*.parquet")))
-
-        for path in files:
-            try:
-                df = pd.read_parquet(path, columns=[text_column])
-                for i in range(len(df)):
-                    self.index.append((path, i))
-            except Exception as e:
-                print(f"⚠️ Skipping file {path}: {e}")
-
-        print(f"📂 Indexed {len(self.index)} {split} samples from {len(files)} files")
-
-    def __len__(self):
-        return len(self.index)
-
-class LCMDataset(Dataset):
-    def __init__(self, data_dir, split, text_column, max_seq_len=None):
-        self.text_column = text_column
-        self.index = []
         self.max_seq_len = max_seq_len
+        self.cache_size = cache_size  # Number of files to keep in memory
+        self.data_cache = {}  # LRU cache for parquet files
+        self.file_paths = []  # Just store file paths
+        self.file_sizes = {}  # Store file sizes for length calculation
+        self.total_samples = 0
 
         # Load SoT and EoT once
         with safe_open("src/LexaLCM/Data/SpecialConcepts/StartOfText.safetensors", framework="pt") as f:
@@ -44,24 +27,66 @@ class LCMDataset(Dataset):
         with safe_open("src/LexaLCM/Data/SpecialConcepts/EndOfText.safetensors", framework="pt") as f:
             self.eot = f.get_tensor("embedding").squeeze()
 
+        # Just collect file paths
         split_dir = os.path.join(data_dir, split)
-        files = sorted(glob.glob(os.path.join(split_dir, "*.parquet")))
-        for path in files:
-            try:
-                df = pd.read_parquet(path, columns=[text_column])
-                for i in range(len(df)):
-                    self.index.append((path, i))
-            except Exception as e:
-                print(f"⚠️ Skipping file {path}: {e}")
+        self.file_paths = sorted(glob.glob(os.path.join(split_dir, "*.parquet")))
+        print(f"📂 Found {len(self.file_paths)} parquet files")
 
-        print(f"📂 Indexed {len(self.index)} {split} samples from {len(files)} files")
+        # Pre-calculate total samples using parquet metadata
+        print("📊 Calculating dataset size...")
+        for path in self.file_paths:
+            try:
+                # Use pyarrow to get row count without loading data
+                parquet_file = pq.ParquetFile(path)
+                num_rows = parquet_file.metadata.num_rows
+                self.file_sizes[path] = num_rows
+                self.total_samples += num_rows
+            except Exception as e:
+                print(f"⚠️ Error reading {path}: {e}")
+                # If metadata reading fails, fall back to loading the file
+                df = pd.read_parquet(path, columns=[self.text_column])
+                self.file_sizes[path] = len(df)
+                self.total_samples += len(df)
+        
+        print(f"📊 Total samples: {self.total_samples:,}")
+
+    def _get_file_and_row(self, idx):
+        """Convert global index to file and row index"""
+        if idx >= self.total_samples:
+            raise IndexError(f"Index {idx} out of range (total: {self.total_samples})")
+            
+        current_idx = 0
+        for path in self.file_paths:
+            file_size = self.file_sizes[path]
+            if current_idx + file_size > idx:
+                return path, idx - current_idx
+            current_idx += file_size
+        
+        raise IndexError("Index out of range")
+
+    def _load_file(self, path):
+        """Load a file into cache, maintaining cache size limit"""
+        if path in self.data_cache:
+            return self.data_cache[path]
+        
+        # If cache is full, remove oldest entry
+        if len(self.data_cache) >= self.cache_size:
+            oldest_key = next(iter(self.data_cache))
+            del self.data_cache[oldest_key]
+        
+        # Load new file
+        df = pd.read_parquet(path, columns=[self.text_column])
+        self.data_cache[path] = df
+        return df
 
     def __len__(self):
-        return len(self.index)
+        return self.total_samples
 
     def __getitem__(self, idx):
-        path, row_idx = self.index[idx]
-        df = pd.read_parquet(path, columns=[self.text_column])
+        path, row_idx = self._get_file_and_row(idx)
+        
+        # Load file into cache if needed
+        df = self._load_file(path)
         row = df.iloc[row_idx][self.text_column]
 
         try:

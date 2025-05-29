@@ -89,7 +89,8 @@ class AdaLNModulator(nn.Module):
         for layer in self.ff:
             if isinstance(layer, nn.Linear):
                 nn.init.zeros_(layer.weight)
-                nn.init.zeros_(layer.bias)
+                # nn.init.zeros_(layer.bias) Adjusted this to try and fight the exploding gradient problem
+                nn.init.normal_(layer.weight, mean=0.0, std=1e-3)
 
     def forward(self, t_emb):
         return self.ff(t_emb).chunk(3, dim=-1)  # returns γ, β, α
@@ -151,6 +152,7 @@ class FeedForward_AdaLN(nn.Module):
         x_gated, x_linear = x_proj.chunk(2, dim=-1)
         x_act = F.silu(x_gated) * x_linear
         x_out = self.linear2(self.dropout(x_act))
+        x_out = torch.clamp(x_out, min=-5.0, max=5.0) # Clamp the output to -5.0 to 5.0 to prevent the exploding gradient problem
 
         if Verbose_Model:
             print(f"[DEBUG - model] FeedForward_AdaLN Output dtype: x = {x.dtype}, α = {α.dtype}, x_out = {x_out.dtype}")

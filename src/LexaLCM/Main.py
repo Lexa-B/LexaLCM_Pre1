@@ -4,14 +4,34 @@ import yaml
 import argparse
 import wandb
 import torch
+import numpy as np
+import evaluate
 
 from LexaLCM.LCM_Config import LexaLCMConfig
 from LexaLCM.LCM_Model import LexaLCM
 from LexaLCM.Data.DataHandler import LCMDataset, LCMDataset_DryRun, LCMCollator
+from LexaLCM.Utils.NaNGradChecker import NaNGradChecker
 from transformers import Trainer, TrainingArguments
 
 def count_trainable_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+def compute_metrics(eval_pred):
+    """Compute metrics for evaluation."""
+    predictions, labels = eval_pred
+    # Convert to numpy if they're tensors
+    if isinstance(predictions, torch.Tensor):
+        predictions = predictions.detach().cpu().numpy()
+    if isinstance(labels, torch.Tensor):
+        labels = labels.detach().cpu().numpy()
+    
+    # Calculate L2 loss
+    l2_loss = np.mean(np.sqrt(np.sum((predictions - labels) ** 2, axis=-1)))
+    
+    return {
+        "eval_loss": float(l2_loss),
+        "eval_l2_loss": float(l2_loss)
+    }
 
 def RunTraining(config_training, model, train_dataset, val_dataset=None, dry_run=False, resume_from_checkpoint=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -23,21 +43,35 @@ def RunTraining(config_training, model, train_dataset, val_dataset=None, dry_run
 
     print(f"Trainable Parameters: {count_trainable_params(model):,}")
 
+    # Ensure save steps is a multiple of eval steps
+    eval_steps = config_training['training']['eval_every']
+    save_steps = config_training['training']['save_every']
+    if save_steps % eval_steps != 0:
+        # Round up to next multiple of eval_steps
+        save_steps = ((save_steps // eval_steps) + 1) * eval_steps
+        print(f"⚠️ Adjusted save_steps from {config_training['training']['save_every']} to {save_steps} to be a multiple of eval_steps ({eval_steps})")
+
     training_args = TrainingArguments(
         output_dir=config_training['training']['output_dir'],
         per_device_train_batch_size=1 if dry_run else config_training['training']['batch_size'],
         bf16=config_training['training']['bf16'],
         max_steps=1 if dry_run else config_training['training']['max_steps'],
-        logging_steps=1 if dry_run else config_training['training']['log_every'],
+        logging_steps=config_training['wandb']['log_every'],  # Log every step
+        logging_first_step=True,  # Log the first step
+        logging_dir="./logs",  # Directory for storing logs
         eval_strategy="no" if dry_run else "steps",
-        eval_steps=None if dry_run else config_training['training']['eval_every'],
-        save_steps=config_training['training']['save_every'],
+        eval_steps=None if dry_run else eval_steps,
+        save_steps=save_steps,
         learning_rate=config_training['training']['learning_rate'],
         weight_decay=config_training['training']['weight_decay'],
         warmup_steps=config_training['training']['warmup_steps'],
         max_grad_norm=config_training['training']['max_grad_norm'],
         run_name=config_training['wandb']['run_name'],
-        remove_unused_columns=False
+        remove_unused_columns=False,
+        report_to="wandb",  # Enable wandb reporting
+        load_best_model_at_end=True,  # Load the best model at the end of training
+        metric_for_best_model="eval_loss",  # Use eval_loss to determine the best model
+        greater_is_better=False,  # Lower loss is better
     )
 
     trainer = Trainer(
@@ -46,7 +80,9 @@ def RunTraining(config_training, model, train_dataset, val_dataset=None, dry_run
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         data_collator=LCMCollator(),
+        compute_metrics=compute_metrics,  # Add compute_metrics function
     )
+    trainer.add_callback(NaNGradChecker())
 
     print("\n🚀 Starting training...")
     trainer.train(resume_from_checkpoint=None if dry_run else resume_from_checkpoint)

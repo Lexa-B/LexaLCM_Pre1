@@ -34,7 +34,7 @@ clear & uv run --extra gpu -m src.LexaLCM.Main --dry-run --verbose
 
 ### 事前学習手順を始める ｜ Run the training
 ```bash
-clear & uv run --extra gpu -m src.LexaLCM.Main
+clear & uv run --extra gpu -m src.LexaLCM.Main -v
 ```
 
 
