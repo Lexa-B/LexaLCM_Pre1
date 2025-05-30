@@ -13,7 +13,7 @@ from LexaLCM.LCM_Config import LexaLCMConfig
 Verbose_Model = False
 Verbose_Contextualizer = False
 Verbose_Denoiser = False
-Verbose_Stats = True
+Verbose_Stats = False
 
 ## ------------------------------------------------------------
 ## Helper Layers
@@ -458,11 +458,11 @@ class ContextualizerTower(nn.Module):
     def __init__(self, num_layers: int, d_model: int, n_heads: int, d_ff: int, dropout: float):
         super().__init__()
         scale = 1.0 / math.sqrt(num_layers)
+        self.norm = RMSNorm(d_model)  # Final norm layer (post-residual stack)
         self.layers = nn.ModuleList([
             ContextualizerLayer(d_model, n_heads, d_ff, dropout, scale)
             for _ in range(num_layers)
         ])
-        self.norm = RMSNorm(d_model)  # Final norm layer (post-residual stack)
 
     def forward(self, x):
         for i, layer in enumerate(self.layers):
@@ -497,38 +497,52 @@ class LatentBridge(nn.Module):
 ## Denoiser Tower
 
 class DenoiserLayer(nn.Module):
-    def __init__(self, d_model: int, d_ff: int, n_heads: int, dropout: float):
+    def __init__(self, d_model: int, d_ff: int, n_heads: int, dropout: float, residual_scale: float = 1.0):
         super().__init__()
         self.self_attention = DenoiserSelfAttention(d_model, n_heads, dropout)
         self.cross_attention = DenoiserCrossAttention(d_model, n_heads, dropout)
         self.mlp = FeedForward_AdaLN(d_model, d_ff, dropout)
 
+        self.residual_connections = nn.ModuleList([
+            ResidualConnection(d_model, dropout, residual_scale),
+            ResidualConnection(d_model, dropout, residual_scale),
+            ResidualConnection(d_model, dropout, residual_scale)
+        ])
+
     def forward(self, x, context, timestep, *, dropout_denoiser=0.0, training=False):
-        # Each sublayer already handles AdaLN inside
-        x = x + self.self_attention(x, timestep)
-        x = x + self.cross_attention(x, context, timestep, dropout_denoiser=dropout_denoiser, training=training)
-        x = x + self.mlp(x, timestep)
+        # Mask should be externally assigned before call. Each sublayer already handles AdaLN inside
+        x = self.residual_connections[0](x, lambda x_: self.self_attention(x_, timestep))
+        x = self.residual_connections[1](x, lambda x_: self.cross_attention(x_, context, timestep, dropout_denoiser=dropout_denoiser, training=training))
+        x = self.residual_connections[2](x, lambda x_: self.mlp(x_, timestep))
         return x
 
 class DenoiserTower(nn.Module):
     def __init__(self, num_layers, d_model, d_ff, n_heads, dropout):
         super().__init__()
+        self.final_norm = RMSNorm(d_model) # Optional — depends on paper interpretation
+        residual_scale = 1.0 / math.sqrt(num_layers)
+
         self.layers = nn.ModuleList([
-            DenoiserLayer(d_model, d_ff, n_heads, dropout)
+            DenoiserLayer(d_model, d_ff, n_heads, dropout, residual_scale)
             for _ in range(num_layers)
         ])
-        self.final_norm = RMSNorm(d_model)  # Optional — depends on paper interpretation
 
     def forward(self, x, context, timestep, *, dropout_denoiser=0.0, training=False):
         with autocast(dtype=torch.bfloat16, device_type="cuda", enabled=True):
             for i, layer in enumerate(self.layers):
                 x = layer(x, context, timestep, dropout_denoiser=dropout_denoiser, training=training)
+                if Verbose_Model:
+                    print(f"[DEBUG - model] After DenoiserLayer {i}: dtype = {x.dtype}, mean = {x.mean().item():.5f}, std = {x.std().item():.5f}")
+
             x = self.final_norm(x)
+
             if Verbose_Model:
                 print(f"[DEBUG - model] After DenoiserTower norm (before dtype clamp): dtype = {x.dtype}")
             x = x.to(torch.bfloat16)
             if Verbose_Model:
                 print(f"[DEBUG - model] After DenoiserTower norm: dtype = {x.dtype}")
+
+        assert x.dtype == torch.bfloat16, f"Dtype drifted at DenoiserTower output: {x.dtype}"
 
         return x
 

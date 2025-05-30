@@ -15,7 +15,7 @@ class LexaLCMConfig(PretrainedConfig):
         d_ff=6144, # 8192 (* 4) is the default for SwiGLU, but you can use 6144 ( * 3) for a smaller model
         dropout_context=0.1,
         dropout_latent=0.1,
-        dropout_denoiser=0.05, # 0.15 is the default for Meta FAIR's LCM, reduced this to fight exploding gradients
+        dropout_denoiser=0.15, # 0.15 is the default for Meta FAIR's LCM, reduced this to fight exploding gradients
         denoiser_iterations_pretrain = 80,
         denoiser_iterations_inference = 40,
         AdaLN_Timestep_Embed_Dim = 256,
