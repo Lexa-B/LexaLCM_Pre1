@@ -21,9 +21,35 @@ source .venv/bin/activate # activate the virtual environment
 uv pip install -e ".[gpu]" # install the dependencies (gpu)... if you want to install the dependencies (cpu), use ".[cpu]" instead
 ```
 
+## Inference
+```bash
+clear & uv run Tests/TestInference.py
+```
 
-
-
+Currently, it's not very smart, but it's a good start. Expect to see something like this:
+```txt
+2025-05-29 18:43:29,473 - sonar_pipeline - INFO - Initializing pipeline with config: PipelineConfig(device='cuda', dtype=torch.float32, language='eng_Latn', verbose=True, sequential=False)
+2025-05-29 18:43:29,473 - sonar_pipeline - INFO - Initialized TextToEmbeddingPipeline
+2025-05-29 18:43:29,473 - sonar_pipeline - INFO - Initializing pipeline with config: PipelineConfig(device='cuda', dtype=torch.float32, language='eng_Latn', verbose=True, sequential=False)
+2025-05-29 18:43:29,473 - sonar_pipeline - INFO - Initialized EmbeddingToTextPipeline
+2025-05-29 18:43:29,473 - sonar_pipeline - INFO - Encoding sentences: ['[[Start of Text.]]']
+2025-05-29 18:43:34,136 - sonar_pipeline - INFO - Generated embeddings with shape: 1, dtype: <class 'list'>
+2025-05-29 18:43:34,136 - sonar_pipeline - INFO - Encoding sentences: ['Hello!']
+2025-05-29 18:43:38,700 - sonar_pipeline - INFO - Generated embeddings with shape: 1, dtype: <class 'list'>
+2025-05-29 18:43:38,700 - sonar_pipeline - INFO - Encoding sentences: ['How are you?']
+2025-05-29 18:43:43,223 - sonar_pipeline - INFO - Generated embeddings with shape: 1, dtype: <class 'list'>
+[DEBUG - model] labels is None, returning x[:, -1:, :] - shape=torch.Size([1, 1, 1024]), dtype=torch.float32
+→ Output shape: torch.Size([1, 1, 1024]), dtype: torch.float32
+→ Prediction vector sample: tensor([ 0.0058, -0.0275,  0.0054, -0.0032,  0.0221,  0.0002, -0.0129,  0.0175,
+         0.0127,  0.0257], device='cuda:0')
+2025-05-29 18:43:43,761 - sonar_pipeline - INFO - Decoding embedding with shape: torch.Size([1, 1024]), dtype: torch.float32
+2025-05-29 18:43:49,382 - sonar_pipeline - INFO - Decoded text: ['How are you?']
+2025-05-29 18:43:49,383 - sonar_pipeline - INFO - Decoding embedding with shape: torch.Size([1, 1024]), dtype: torch.float32
+2025-05-29 18:43:54,866 - sonar_pipeline - INFO - Decoded text: ['End of the year.']
+→ Decoded text - Last SONAR Embedding: How are you?
+→ Decoded text - Last LCM Embedding: End of the year.
+[1]+  Done                    clear
+```
 
 ## AIの事前学習手順 ｜ Training
 
@@ -36,7 +62,6 @@ clear & uv run --extra gpu -m src.LexaLCM.Main --dry-run --verbose
 ```bash
 clear & uv run --extra gpu -m src.LexaLCM.Main -v
 ```
-
 
 ## Testing
 

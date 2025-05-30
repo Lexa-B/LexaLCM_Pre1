@@ -73,7 +73,7 @@ print(json.dumps({{"result": result}}))
 @dataclass
 class PipelineConfig:
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    dtype: torch.dtype = torch.bfloat16
+    dtype: torch.dtype = torch.float32
     language: str = "eng_Latn"
     verbose: bool = False
     sequential: bool = False
@@ -89,7 +89,7 @@ class BasePipeline:
     ):
         self.config = PipelineConfig(
             device=device or ("cuda" if torch.cuda.is_available() else "cpu"),
-            dtype=dtype or torch.bfloat16,
+            dtype=dtype or torch.float32,
             language=language,
             verbose=verbose,
             sequential=sequential
@@ -123,7 +123,7 @@ pipeline = TextToEmbeddingModelPipeline(
     encoder="text_sonar_basic_encoder",
     tokenizer="text_sonar_basic_encoder",
     device=device,
-    dtype=torch.bfloat16
+    dtype=torch.float32
 )
 # Pass text directly to predict
 result = pipeline.predict({repr(inputs)}, source_lang="{self.config.language}")
@@ -134,7 +134,7 @@ result = pipeline.predict({repr(inputs)}, source_lang="{self.config.language}")
             logger.info(f"Generated embeddings with shape: {len(embeddings)}, dtype: {type(embeddings)}")
         
         # Convert list back to tensor and ensure correct dtype
-        embeddings_tensor = torch.tensor(embeddings[0] if len(inputs) == 1 else embeddings, dtype=torch.bfloat16)
+        embeddings_tensor = torch.tensor(embeddings[0] if len(inputs) == 1 else embeddings, dtype=torch.float32)
         return embeddings_tensor
 
 class EmbeddingToTextPipeline(BasePipeline):
@@ -155,7 +155,7 @@ class EmbeddingToTextPipeline(BasePipeline):
             inputs = inputs.unsqueeze(0)
         
         # Ensure correct dtype
-        inputs = inputs.to(dtype=torch.bfloat16)
+        inputs = inputs.to(dtype=torch.float32)
         
         if self.config.verbose:
             logger.info(f"Decoding embedding with shape: {inputs.shape}, dtype: {inputs.dtype}")
@@ -170,10 +170,10 @@ pipeline = EmbeddingToTextModelPipeline(
     decoder="text_sonar_basic_decoder",
     tokenizer="text_sonar_basic_encoder",
     device=device,
-    dtype=torch.bfloat16
+    dtype=torch.float32
 )
 # Convert embedding to tensor with correct dtype
-embedding = torch.tensor({repr(embedding)}, dtype=torch.bfloat16)
+embedding = torch.tensor({repr(embedding)}, dtype=torch.float32)
 result = pipeline.predict(embedding, target_lang="{self.config.language}")
 """
         decoded = run_in_venv(code, embedding=embedding)
