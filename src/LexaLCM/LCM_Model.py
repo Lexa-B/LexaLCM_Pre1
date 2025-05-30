@@ -13,6 +13,7 @@ from LexaLCM.LCM_Config import LexaLCMConfig
 Verbose_Model = False
 Verbose_Contextualizer = False
 Verbose_Denoiser = False
+Verbose_Stats = False
 
 ## ------------------------------------------------------------
 ## Helper Layers
@@ -88,8 +89,7 @@ class AdaLNModulator(nn.Module):
         # Start as identity function
         for layer in self.ff:
             if isinstance(layer, nn.Linear):
-                nn.init.zeros_(layer.weight)
-                # nn.init.zeros_(layer.bias) Adjusted this to try and fight the exploding gradient problem
+                nn.init.zeros_(layer.bias)
                 nn.init.normal_(layer.weight, mean=0.0, std=1e-3)
 
     def forward(self, t_emb):
@@ -98,15 +98,16 @@ class AdaLNModulator(nn.Module):
 ## Other
 
 class ResidualConnection(nn.Module):
-    def __init__(self, features: int, dropout: float):
+    def __init__(self, features: int, dropout: float, residual_scale: float = 1.0):
         super().__init__()
         self.norm = RMSNorm(features)
         self.dropout = nn.Dropout(dropout)
+        self.residual_scale = residual_scale
 
     def forward(self, x, sublayer):
-        # Pre-normalize input → pass through sublayer → dropout → residual add
-        return x + self.dropout(sublayer(self.norm(x)))
-
+        # Pre-normalize input → pass through sublayer → dropout → residual add with scale
+        return x + self.dropout(sublayer(self.norm(x))) * self.residual_scale
+    
 class FeedForward_SwiGLU(nn.Module):
     def __init__(self, d_model: int, d_ff: int, dropout: float):
         super().__init__()
@@ -136,19 +137,39 @@ class FeedForward_AdaLN(nn.Module):
     def forward(self, x, t_emb):
 
         if Verbose_Model:
-            print(f"[DEBUG - model] FeedForward_AdaLN Input dtype: x = {x.dtype}")
+            print(f"[DEBUG - FF_AdaLN] FeedForward_AdaLN Input dtype: x = {x.dtype}")
 
         # Step 1: Compute modulation params
         γ, β, α = self.modulator(t_emb)  # Each [B, D]
+
+        if torch.isnan(α).any() or torch.isinf(α).any():
+            print(f"[NaN/Inf] Detected in α")
+        if torch.isnan(γ).any() or torch.isinf(γ).any():
+            print(f"[NaN/Inf] Detected in γ")
+        if torch.isnan(β).any() or torch.isinf(β).any():
+            print(f"[NaN/Inf] Detected in β")
+        if Verbose_Stats:
+            print(f"[STATS - AdaLN Modulator] α mean: {α.mean().item():.5f}, std: {α.std().item():.5f}")
+        if Verbose_Stats:
+            print(f"[STATS - AdaLN Modulator] γ mean: {γ.mean().item():.5f}, std: {γ.std().item():.5f}")
+        if Verbose_Stats:
+            print(f"[STATS - AdaLN Modulator] β mean: {β.mean().item():.5f}, std: {β.std().item():.5f}")
+
         γ = γ.unsqueeze(1)  # [B, 1, D]
         β = β.unsqueeze(1)
         α = α.unsqueeze(1)
+
+        α = α.clamp(-3.0, 3.0)
+        γ = γ.clamp(-3.0, 3.0)
+        β = β.clamp(-5.0, 5.0)
 
         # Step 2: Modulate input
         x_mod = (1 + γ) * x + β  # [B, T, D]
 
         # Step 3: SwiGLU MLP
         x_proj = self.linear1(x_mod)
+        if Verbose_Stats:
+            print(f"[STATS - FF_AdaLN] FF x_proj std: {x_proj.std().item():.5f}")
         x_gated, x_linear = x_proj.chunk(2, dim=-1)
         x_act = F.silu(x_gated) * x_linear
         x_out = self.linear2(self.dropout(x_act))
@@ -418,14 +439,14 @@ class PostNetD(nn.Module):
 ## Contextualizer Tower
 
 class ContextualizerLayer(nn.Module):
-    def __init__(self, d_model: int, n_heads: int, d_ff: int, dropout: float):
+    def __init__(self, d_model: int, n_heads: int, d_ff: int, dropout: float, residual_scale: float):
         super().__init__()
         self.self_attention = ContextualizerSelfAttention(d_model, n_heads, dropout)
         self.mlp = FeedForward_SwiGLU(d_model, d_ff, dropout)
 
         self.residual_connections = nn.ModuleList([
-            ResidualConnection(d_model, dropout),
-            ResidualConnection(d_model, dropout)
+            ResidualConnection(d_model, dropout, residual_scale),
+            ResidualConnection(d_model, dropout, residual_scale)
         ])
 
     def forward(self, x):
@@ -436,11 +457,12 @@ class ContextualizerLayer(nn.Module):
 class ContextualizerTower(nn.Module):
     def __init__(self, num_layers: int, d_model: int, n_heads: int, d_ff: int, dropout: float):
         super().__init__()
+        scale = 1.0 / math.sqrt(num_layers)
+        self.norm = RMSNorm(d_model)  # Final norm layer (post-residual stack)
         self.layers = nn.ModuleList([
-            ContextualizerLayer(d_model, n_heads, d_ff, dropout)
+            ContextualizerLayer(d_model, n_heads, d_ff, dropout, scale)
             for _ in range(num_layers)
         ])
-        self.norm = RMSNorm(d_model)  # Final norm layer (post-residual stack)
 
     def forward(self, x):
         for i, layer in enumerate(self.layers):
@@ -475,38 +497,52 @@ class LatentBridge(nn.Module):
 ## Denoiser Tower
 
 class DenoiserLayer(nn.Module):
-    def __init__(self, d_model: int, d_ff: int, n_heads: int, dropout: float):
+    def __init__(self, d_model: int, d_ff: int, n_heads: int, dropout: float, residual_scale: float = 1.0):
         super().__init__()
         self.self_attention = DenoiserSelfAttention(d_model, n_heads, dropout)
         self.cross_attention = DenoiserCrossAttention(d_model, n_heads, dropout)
         self.mlp = FeedForward_AdaLN(d_model, d_ff, dropout)
 
+        self.residual_connections = nn.ModuleList([
+            ResidualConnection(d_model, dropout, residual_scale),
+            ResidualConnection(d_model, dropout, residual_scale),
+            ResidualConnection(d_model, dropout, residual_scale)
+        ])
+
     def forward(self, x, context, timestep, *, dropout_denoiser=0.0, training=False):
-        # Each sublayer already handles AdaLN inside
-        x = x + self.self_attention(x, timestep)
-        x = x + self.cross_attention(x, context, timestep, dropout_denoiser=dropout_denoiser, training=training)
-        x = x + self.mlp(x, timestep)
+        # Mask should be externally assigned before call. Each sublayer already handles AdaLN inside
+        x = self.residual_connections[0](x, lambda x_: self.self_attention(x_, timestep))
+        x = self.residual_connections[1](x, lambda x_: self.cross_attention(x_, context, timestep, dropout_denoiser=dropout_denoiser, training=training))
+        x = self.residual_connections[2](x, lambda x_: self.mlp(x_, timestep))
         return x
 
 class DenoiserTower(nn.Module):
     def __init__(self, num_layers, d_model, d_ff, n_heads, dropout):
         super().__init__()
+        self.final_norm = RMSNorm(d_model) # Optional — depends on paper interpretation
+        residual_scale = 1.0 / math.sqrt(num_layers)
+
         self.layers = nn.ModuleList([
-            DenoiserLayer(d_model, d_ff, n_heads, dropout)
+            DenoiserLayer(d_model, d_ff, n_heads, dropout, residual_scale)
             for _ in range(num_layers)
         ])
-        self.final_norm = RMSNorm(d_model)  # Optional — depends on paper interpretation
 
     def forward(self, x, context, timestep, *, dropout_denoiser=0.0, training=False):
         with autocast(dtype=torch.bfloat16, device_type="cuda", enabled=True):
             for i, layer in enumerate(self.layers):
                 x = layer(x, context, timestep, dropout_denoiser=dropout_denoiser, training=training)
+                if Verbose_Model:
+                    print(f"[DEBUG - model] After DenoiserLayer {i}: dtype = {x.dtype}, mean = {x.mean().item():.5f}, std = {x.std().item():.5f}")
+
             x = self.final_norm(x)
+
             if Verbose_Model:
                 print(f"[DEBUG - model] After DenoiserTower norm (before dtype clamp): dtype = {x.dtype}")
             x = x.to(torch.bfloat16)
             if Verbose_Model:
                 print(f"[DEBUG - model] After DenoiserTower norm: dtype = {x.dtype}")
+
+        assert x.dtype == torch.bfloat16, f"Dtype drifted at DenoiserTower output: {x.dtype}"
 
         return x
 
@@ -774,7 +810,8 @@ class LexaLCM(PreTrainedModel):
             x = x.unsqueeze(1)           # [B, 1, D]
             labels = labels.unsqueeze(1) # [B, 1, D]
             attention_mask = torch.ones(x.shape[:2], dtype=torch.bool, device=x.device)  # [B, 1]
-            print(f"[DEBUG - model] labels is not None, returning loss and logits - shape={x.shape}, dtype={x.dtype}")
+            if Verbose_Model:   
+                print(f"[DEBUG - model] labels is not None, returning loss and logits - shape={x.shape}, dtype={x.dtype}")
             return {
                 "loss": l2_euclidean_loss_with_mask(x, labels, attention_mask),
                 "logits": x.squeeze(1),  # Optional: remove fake T dimension for outputs
