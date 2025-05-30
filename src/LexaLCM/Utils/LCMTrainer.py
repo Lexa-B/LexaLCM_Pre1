@@ -97,6 +97,8 @@ class LCMTrainer(Trainer):
 
         loss.backward()
 
+        print(f"[Step {self.state.global_step}] loss: {loss.item():.4f}")
+
         # ✅ Log gradient norms
         self.log_gradient_norms()
 

@@ -7,6 +7,7 @@ import torch
 import numpy as np
 import evaluate
 import os
+import json
 
 from LexaLCM.LCM_Config import LexaLCMConfig
 from LexaLCM.LCM_Model import LexaLCM
@@ -36,7 +37,7 @@ def compute_metrics(eval_pred):
         "eval_l2_loss": float(l2_loss)
     }
 
-def RunTraining(config_training, model, train_dataset, val_dataset=None, dry_run=False, resume_from_checkpoint=None):
+def RunTraining(config_training, model, train_dataset, val_dataset=None, dry_run=False, resume_from_checkpoint=None, resume_path=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     if not dry_run:
@@ -83,6 +84,7 @@ def RunTraining(config_training, model, train_dataset, val_dataset=None, dry_run
         greater_is_better=False if load_best_model else None,
         max_grad_norm=config_training['training']['max_grad_norm'] if config_training['training']['optimizer'].lower() == "adamw" else None,
         optim=config_training['training']['optimizer'].lower(),  # Pass "adamw" or "adafactor"
+        dataloader_num_workers=config_training['training']['num_workers'],
     )
 
     trainer = LCMTrainer(
@@ -91,31 +93,38 @@ def RunTraining(config_training, model, train_dataset, val_dataset=None, dry_run
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         data_collator=LCMCollator(),
-        compute_metrics=compute_metrics,  # Add compute_metrics function
-        config_dict=config_training
+        compute_metrics=compute_metrics,
+        config_dict=config_training,
     )
+            
+    # train_dataloader = torch.utils.data.DataLoader(
+    #     train_dataset,
+    #     batch_size=config_training['training']['batch_size'],
+    #     shuffle=True,
+    #     num_workers=20, # How many cpu cores to use for data loading
+    #     collate_fn=LCMCollator()
+    # )
 
-    train_dataloader = torch.utils.data.DataLoader(
-        train_dataset,
-        batch_size=config_training['training']['batch_size'],
-        shuffle=True,
-        num_workers=20, # How many cpu cores to use for data loading
-        collate_fn=LCMCollator()
-    )
+    # eval_dataloader = torch.utils.data.DataLoader(
+    #     val_dataset,
+    #     batch_size=config_training['training']['batch_size'],
+    #     shuffle=False,
+    #     num_workers=20, # How many cpu cores to use for data loading
+    #     collate_fn=LCMCollator()
+    # )
 
-    eval_dataloader = torch.utils.data.DataLoader(
-        val_dataset,
-        batch_size=config_training['training']['batch_size'],
-        shuffle=False,
-        num_workers=20, # How many cpu cores to use for data loading
-        collate_fn=LCMCollator()
-    )
-
-    trainer.get_train_dataloader = lambda: train_dataloader
-    trainer.get_eval_dataloader = lambda eval_dataset=None: eval_dataloader
-    trainer.add_callback(NaNGradChecker())
     print("\n🚀 Starting training...")
-    trainer.train(resume_from_checkpoint=None if dry_run else resume_from_checkpoint)
+    if resume_path:
+        print(f"📦 Resuming training from checkpoint: {resume_path}")  
+        trainer.train(resume_from_checkpoint=resume_path)
+    else:
+        print("Starting training from scratch...")
+        trainer.train()
+
+    # trainer.get_train_dataloader = lambda: train_dataloader
+    # trainer.get_eval_dataloader = lambda eval_dataset=None: eval_dataloader
+    trainer.add_callback(NaNGradChecker())
+
     print("✅ Training complete!")
  
 
@@ -152,12 +161,15 @@ def Main():
     # Init Model
     resume_path = config_training["training"].get("resume_from", None)
 
-    if resume_path and os.path.exists(resume_path):
-        print(f"📦 Loading model weights from checkpoint: {resume_path}")
-        model = LexaLCM.from_pretrained(resume_path)
-    else:
-        model_config = LexaLCMConfig()
-        model = LexaLCM(model_config)
+    # if resume_path and os.path.exists(resume_path):
+    #     print(f"📦 Loading model weights from checkpoint: {resume_path}")
+    #     model = LexaLCM.from_pretrained(resume_path)
+    # else:
+    #     model_config = LexaLCMConfig()
+    #     model = LexaLCM(model_config)
+
+    model_config = LexaLCMConfig()
+    model = LexaLCM(model_config)
 
     # Dry Run
     if args.dry_run:
@@ -187,7 +199,7 @@ def Main():
         sample_size=500
     )
 
-    RunTraining(config_training, model, train_dataset, val_dataset, dry_run=False)
+    RunTraining(config_training, model, train_dataset, val_dataset, dry_run=False, resume_path=resume_path)
 
 if __name__ == "__main__":
     Main()
