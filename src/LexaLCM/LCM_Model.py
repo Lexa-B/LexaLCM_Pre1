@@ -767,15 +767,20 @@ class LexaLCM(PreTrainedModel):
         if Verbose_Model:
             print(f"[DEBUG - model] final output: shape={x.shape}, dtype={x.dtype}")
 
-        # Shape fix: model returns [B, D] but loss expects [B, T, D]
-        x = x.unsqueeze(1)           # [B, 1, D]
-        labels = labels.unsqueeze(1) # [B, 1, D]
-        attention_mask = torch.ones(x.shape[:2], dtype=torch.bool, device=x.device)  # [B, 1]
+        if labels is not None:
+            labels = labels.unsqueeze(1)  # [B, 1, D]
 
-        return {
-            "loss": l2_euclidean_loss_with_mask(x, labels, attention_mask),
-            "logits": x.squeeze(1),  # Optional: remove fake T dimension for outputs
-        }
-
+            # Shape fix: model returns [B, D] but loss expects [B, T, D]
+            x = x.unsqueeze(1)           # [B, 1, D]
+            labels = labels.unsqueeze(1) # [B, 1, D]
+            attention_mask = torch.ones(x.shape[:2], dtype=torch.bool, device=x.device)  # [B, 1]
+            print(f"[DEBUG - model] labels is not None, returning loss and logits - shape={x.shape}, dtype={x.dtype}")
+            return {
+                "loss": l2_euclidean_loss_with_mask(x, labels, attention_mask),
+                "logits": x.squeeze(1),  # Optional: remove fake T dimension for outputs
+            }
+        else:
+            print(f"[DEBUG - model] labels is None, returning x[:, -1:, :] - shape={x[:, -1:, :].shape}, dtype={x[:, -1:, :].dtype}")
+            return x[:, -1:, :]
 
 MODEL_MAPPING.register(LexaLCMConfig, LexaLCM)

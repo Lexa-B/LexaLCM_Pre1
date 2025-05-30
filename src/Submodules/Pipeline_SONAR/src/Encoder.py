@@ -19,7 +19,7 @@ class ConceptEncoder:
             encoder="text_sonar_basic_encoder",
             tokenizer="text_sonar_basic_encoder",
             device=self.device,
-            dtype=torch.bfloat16)
+            dtype=torch.float32)
         
         self.Args = {
             "language": Language,
@@ -54,7 +54,7 @@ class ConceptEncoder:
         if self.Args["sequential"]: # Sequential Translation
             EncodedSentences = []
             for Sentence in sentences:
-                Sentence = self.EncodeSentence(Sentence)
+                Sentence = self.EncodeSentence(Sentence).to(dtype=torch.float32)
                 EncodedSentences.append(Sentence)
                 print(f"Encoded: {Sentence.shape}, dtype: {Sentence.dtype}")
         else: # Batch Translation

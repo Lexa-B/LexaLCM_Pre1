@@ -1,0 +1,52 @@
+import sys
+import os
+import torch
+from torch.amp import autocast
+
+# Add the project root to Python path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../"))
+sys.path.insert(0, project_root)
+
+from Submodules.Pipeline_SONAR.src.pipelines import TextToEmbeddingPipeline, EmbeddingToTextPipeline
+from LexaLCM.LCM_Model import LexaLCM
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Load model
+checkpoint_path = "outputs/checkpoint-2000"
+model = LexaLCM.from_pretrained(checkpoint_path)
+model.eval().cuda()
+
+# Init pipelines
+encoder = TextToEmbeddingPipeline(language="eng_Latn", verbose=True, dtype=torch.float32)
+decoder = EmbeddingToTextPipeline(language="eng_Latn", verbose=True, dtype=torch.float32)
+
+# Input prompt as sequence of sentences
+prompt = ["[[Start of Text.]]", "Hello!", "How are you?"]
+
+# Encode each sentence and build autoregressive input
+with torch.no_grad():
+    context_embeddings = []
+    for sentence in prompt:
+        emb = encoder(sentence)  # shape: [1, 1024]
+        emb = emb.to(torch.float32)
+        context_embeddings.append(emb)
+
+    # Stack to shape [1, T, 1024]
+    context = torch.stack(context_embeddings, dim=0).unsqueeze(0).to(device)  # [1, T, 1024]
+
+    # Assume context is [1, 3, 1024]
+    context_input = context[:, :-1, :]  # [1, 2, 1024]
+    target = context[:, 1:, :]          # [1, 2, 1024]
+
+    # Run model
+    with autocast(dtype=torch.bfloat16, device_type="cuda"):
+        pred = model(context_input)         # Should ideally return [1, 2, 1024]
+    print(f"→ Output shape: {pred.shape}, dtype: {pred.dtype}")
+    print("→ Prediction vector sample:", pred.squeeze(1)[0, :10])
+
+    # Decode the last predicted embedding
+    decoded_Sonar = decoder(target[:, -1, :].squeeze(0))
+    decoded_LCM = decoder(pred[:, -1, :])
+    print(f"→ Decoded text - Last SONAR Embedding: {decoded_Sonar}")
+    print(f"→ Decoded text - Last LCM Embedding: {decoded_LCM}")

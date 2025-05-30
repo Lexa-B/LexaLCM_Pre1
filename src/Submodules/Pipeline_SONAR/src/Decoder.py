@@ -18,7 +18,7 @@ class ConceptDecoder:
             decoder="text_sonar_basic_decoder",
             tokenizer="text_sonar_basic_encoder",
             device=self.device,
-            dtype=torch.bfloat16)
+            dtype=torch.float32)
         
         self.Args = {
             "language": Language,
