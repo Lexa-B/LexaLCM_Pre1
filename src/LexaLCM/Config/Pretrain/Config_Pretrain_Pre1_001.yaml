@@ -4,18 +4,19 @@ training:
   num_denoising_steps: 100 # The denoiser tower runs 100 times, (the contextualizer tower runs only once).
   max_steps: 250000
   warmup_steps: 500
-  gradient_accumulation_steps: 1
-  max_grad_norm: 0.7 # Adjusted to 0.7 at step 3500, 0.8 at step 3000, 0.9 at step 2000 to work on pulling the gradients down
+  optimizer: "adafactor"
+  max_grad_norm: None # If optimizer is adafactor, this will be ignored
+  clip_threshold: 0.8 # If optimizer is not adafactor, this will be ignored
   eval_every: 0
   batch_size: 16
-  learning_rate: 0.0000015
+  learning_rate: null # Adafactor will use the default learning rate
   weight_decay: 0.01
   bf16: true
   max_seq_len: 128  # Truncate sequences that are longer than this *after* adding SoT and EoT
   output_dir: ./outputs
   save_every: 500
   checkpoint_dir: ./checkpoints
-  resume_from: /home/lexa/_Backups/LexaLCM_Checkpoints/checkpoint-3500/ # Set to True or specify a specific filename to resume from a checkpoint (e.g. ./checkpoints/checkpoint_step_5000.pt)
+  resume_from: None # Set to True or specify a specific filename to resume from a checkpoint (e.g. ./checkpoints/checkpoint_step_5000.pt)
 
 data:
   data_dir: /home/lexa/DevProjects/_Data/LexaLCM_Datasets/src/Datasets/Wikipedia_Ja/
@@ -24,6 +25,6 @@ data:
   val_split: Val
 
 wandb:
-  project: LexaLCM_Pre1
-  run_name: lcm_run_007
+  project: LexaLCM_Pre1_Adafactor
+  run_name: lcm_run_002
   log_every: 5
