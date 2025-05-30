@@ -350,7 +350,7 @@ class DenoiserCrossAttention(nn.Module):
         γ = γ.clamp(-3.0, 3.0) # Clamp the output to -3.0 to 3.0 to give it bounds to maintain stability
         β = β.clamp(-5.0, 5.0) # ""  ""
         α = α.clamp(-3.0, 3.0) # ""  ""
-        if Verbose_ModulatorStats:
+        if Verbose_Stats_ModulatorClamping:
             print(f"[MOD2] α: mean={α.mean().item():.5f}, std={α.std().item():.5f}, max={α.abs().max().item():.2f} | γ: mean={γ.mean().item():.5f}, std={γ.std().item():.5f}, max={γ.abs().max().item():.2f} | β: mean={β.mean().item():.5f}, std={β.std().item():.5f}, max={β.abs().max().item():.2f}")
         γ = γ.unsqueeze(1) # -> [batch, 1, d_model]
         β = β.unsqueeze(1) # -> [batch, 1, d_model]
@@ -546,7 +546,7 @@ class DenoiserTower(nn.Module):
                 x = layer(x, context, timestep, dropout_denoiser=dropout_denoiser, training=training)
                 if Verbose_Model:
                     print(f"[DEBUG - model] After DenoiserLayer {i}: dtype = {x.dtype}, mean = {x.mean().item():.5f}, std = {x.std().item():.5f}")
-                if Verbose_ModulatorStats and i == 2:
+                if Verbose_Stats_ModulatorClamping and i == 2:
                     # This is Layer 2, log α/γ/β from the self-attn modulator
                     t_emb = timestep  # [B, d_model], matches your forward call
                     γ, β, α = layer.self_attention.modulator(t_emb)

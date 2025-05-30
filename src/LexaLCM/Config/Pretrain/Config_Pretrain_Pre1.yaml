@@ -26,5 +26,5 @@ data:
 
 wandb:
   project: LexaLCM_Pre1_Adafactor
-  run_name: lcm_run_003
+  run_name: lcm_run_002
   log_every: 5
