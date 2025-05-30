@@ -9,11 +9,12 @@ from torch.amp import autocast
 from transformers import PreTrainedModel, MODEL_MAPPING
 from LexaLCM.LCM_Config import LexaLCMConfig
 
-# ToDo: make these global variables that can be set to True/False from the command line
+# ToDo: make these global variables that can be set to True/False from the command line, maybe
 Verbose_Model = False
 Verbose_Contextualizer = False
 Verbose_Denoiser = False
-Verbose_Stats = False
+Verbose_Stats_Modulator = False
+Verbose_Stats_ModulatorClamping = False
 
 ## ------------------------------------------------------------
 ## Helper Layers
@@ -74,6 +75,7 @@ class TimestepEmbedder(nn.Module):
         emb = torch.cat([sinusoid.sin(), sinusoid.cos()], dim=-1)  # shape: [B, t_emb_dim]
         # Feed through MLP
         emb = self.lin2(self.act(self.lin1(emb)))
+        emb = emb.clamp(-10, 10) # Clamp the output to -10 to 10 to prevent the timestamp from being too erratically large
         return emb  # shape: [B, d_model]
 
 class AdaLNModulator(nn.Module):
@@ -141,6 +143,9 @@ class FeedForward_AdaLN(nn.Module):
 
         # Step 1: Compute modulation params
         γ, β, α = self.modulator(t_emb)  # Each [B, D]
+        γ = γ.clamp(-3.0, 3.0) # Clamp the output to -3.0 to 3.0 to give it bounds to maintain stability
+        β = β.clamp(-5.0, 5.0) # ""  ""
+        α = α.clamp(-3.0, 3.0) # ""  ""
 
         if torch.isnan(α).any() or torch.isinf(α).any():
             print(f"[NaN/Inf] Detected in α")
@@ -148,11 +153,11 @@ class FeedForward_AdaLN(nn.Module):
             print(f"[NaN/Inf] Detected in γ")
         if torch.isnan(β).any() or torch.isinf(β).any():
             print(f"[NaN/Inf] Detected in β")
-        if Verbose_Stats:
+        if Verbose_Stats_Modulator:
             print(f"[STATS - AdaLN Modulator] α mean: {α.mean().item():.5f}, std: {α.std().item():.5f}")
-        if Verbose_Stats:
+        if Verbose_Stats_Modulator:
             print(f"[STATS - AdaLN Modulator] γ mean: {γ.mean().item():.5f}, std: {γ.std().item():.5f}")
-        if Verbose_Stats:
+        if Verbose_Stats_Modulator:
             print(f"[STATS - AdaLN Modulator] β mean: {β.mean().item():.5f}, std: {β.std().item():.5f}")
 
         γ = γ.unsqueeze(1)  # [B, 1, D]
@@ -168,7 +173,7 @@ class FeedForward_AdaLN(nn.Module):
 
         # Step 3: SwiGLU MLP
         x_proj = self.linear1(x_mod)
-        if Verbose_Stats:
+        if Verbose_Stats_Modulator:
             print(f"[STATS - FF_AdaLN] FF x_proj std: {x_proj.std().item():.5f}")
         x_gated, x_linear = x_proj.chunk(2, dim=-1)
         x_act = F.silu(x_gated) * x_linear
@@ -302,6 +307,9 @@ class DenoiserSelfAttention(nn.Module):
 
         # 1. Modulate input with AdaLN based on timestep
         γ, β, α = self.modulator(t_emb) # [batch, d_model] each
+        γ = γ.clamp(-3.0, 3.0) # Clamp the output to -3.0 to 3.0 to give it bounds to maintain stability
+        β = β.clamp(-5.0, 5.0) # ""  ""
+        α = α.clamp(-3.0, 3.0) # ""  ""
         γ = γ.unsqueeze(1) # -> [batch, 1, d_model]
         β = β.unsqueeze(1) # -> [batch, 1, d_model]
         α = α.unsqueeze(1) # -> [batch, 1, d_model]
@@ -339,6 +347,11 @@ class DenoiserCrossAttention(nn.Module):
 
         # 1. Modulate input with AdaLN based on timestep
         γ, β, α = self.modulator(t_emb) # [batch, d_model] each
+        γ = γ.clamp(-3.0, 3.0) # Clamp the output to -3.0 to 3.0 to give it bounds to maintain stability
+        β = β.clamp(-5.0, 5.0) # ""  ""
+        α = α.clamp(-3.0, 3.0) # ""  ""
+        if Verbose_ModulatorStats:
+            print(f"[MOD2] α: mean={α.mean().item():.5f}, std={α.std().item():.5f}, max={α.abs().max().item():.2f} | γ: mean={γ.mean().item():.5f}, std={γ.std().item():.5f}, max={γ.abs().max().item():.2f} | β: mean={β.mean().item():.5f}, std={β.std().item():.5f}, max={β.abs().max().item():.2f}")
         γ = γ.unsqueeze(1) # -> [batch, 1, d_model]
         β = β.unsqueeze(1) # -> [batch, 1, d_model]
         α = α.unsqueeze(1) # -> [batch, 1, d_model]
@@ -533,6 +546,11 @@ class DenoiserTower(nn.Module):
                 x = layer(x, context, timestep, dropout_denoiser=dropout_denoiser, training=training)
                 if Verbose_Model:
                     print(f"[DEBUG - model] After DenoiserLayer {i}: dtype = {x.dtype}, mean = {x.mean().item():.5f}, std = {x.std().item():.5f}")
+                if Verbose_ModulatorStats and i == 2:
+                    # This is Layer 2, log α/γ/β from the self-attn modulator
+                    t_emb = timestep  # [B, d_model], matches your forward call
+                    γ, β, α = layer.self_attention.modulator(t_emb)
+                    print(f"[MOD2] α: mean={α.mean().item():.5f}, std={α.std().item():.5f}, max={α.abs().max().item():.2f} | γ: mean={γ.mean().item():.5f}, std={γ.std().item():.5f}, max={γ.abs().max().item():.2f} | β: mean={β.mean().item():.5f}, std={β.std().item():.5f}, max={β.abs().max().item():.2f}")
 
             x = self.final_norm(x)
 

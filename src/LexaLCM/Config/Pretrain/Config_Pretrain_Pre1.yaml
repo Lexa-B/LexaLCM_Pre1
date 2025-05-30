@@ -16,7 +16,7 @@ training:
   output_dir: ./outputs
   save_every: 500
   checkpoint_dir: ./checkpoints
-  resume_from: None # Set to True or specify a specific filename to resume from a checkpoint (e.g. ./checkpoints/checkpoint_step_5000.pt)
+  resume_from: /home/lexa/_Backups/Checkpoints_LexaLCM_Pre1_Adafactor/Run_002/checkpoint-24000/ # Set to True or specify a specific filename to resume from a checkpoint (e.g. ./checkpoints/checkpoint_step_5000.pt)
 
 data:
   data_dir: /home/lexa/DevProjects/_Data/LexaLCM_Datasets/src/Datasets/Wikipedia_Ja/
@@ -26,5 +26,5 @@ data:
 
 wandb:
   project: LexaLCM_Pre1_Adafactor
-  run_name: lcm_run_001
+  run_name: lcm_run_003
   log_every: 5

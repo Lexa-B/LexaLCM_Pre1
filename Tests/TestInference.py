@@ -13,7 +13,7 @@ from LexaLCM.LCM_Model import LexaLCM
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Load model
-checkpoint_path = "outputs/checkpoint-2000"
+checkpoint_path = "/home/lexa/_Backups/Checkpoints_LexaLCM_Pre1_Adafactor/Run_002/checkpoint-24000/"
 model = LexaLCM.from_pretrained(checkpoint_path)
 model.eval().cuda()
 
@@ -22,7 +22,7 @@ encoder = TextToEmbeddingPipeline(language="eng_Latn", verbose=True, dtype=torch
 decoder = EmbeddingToTextPipeline(language="eng_Latn", verbose=True, dtype=torch.float32)
 
 # Input prompt as sequence of sentences
-prompt = ["[[Start of Text.]]", "Hello!", "How are you?"]
+prompt = ["[[Start of Text.]]", "The Sengoku era was a period of great conflict in Japan.", "Many samurai fought in that time.", "After its conclusion, new peace was established."]
 
 # Encode each sentence and build autoregressive input
 with torch.no_grad():
