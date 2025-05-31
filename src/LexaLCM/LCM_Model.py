@@ -8,12 +8,16 @@ import torch.nn.functional as F
 from torch.amp import autocast
 from transformers import PreTrainedModel, MODEL_MAPPING
 from LexaLCM.LCM_Config import LexaLCMConfig
+from LexaLCM.Utils.InspectEmbeddings import inspect_embeddings as inspect_util
 
-# ToDo: make these global variables that can be set to True/False from the command line
+
+# ToDo: make these global variables that can be set to True/False from the command line, maybe
 Verbose_Model = False
 Verbose_Contextualizer = False
 Verbose_Denoiser = False
-Verbose_Stats = False
+Verbose_Stats_Modulator = False
+Verbose_Stats_ModulatorClamping = False
+Verbose_Loss = True
 
 ## ------------------------------------------------------------
 ## Helper Layers
@@ -74,6 +78,7 @@ class TimestepEmbedder(nn.Module):
         emb = torch.cat([sinusoid.sin(), sinusoid.cos()], dim=-1)  # shape: [B, t_emb_dim]
         # Feed through MLP
         emb = self.lin2(self.act(self.lin1(emb)))
+        emb = emb.clamp(-10, 10) # Clamp the output to -10 to 10 to prevent the timestamp from being too erratically large
         return emb  # shape: [B, d_model]
 
 class AdaLNModulator(nn.Module):
@@ -141,6 +146,9 @@ class FeedForward_AdaLN(nn.Module):
 
         # Step 1: Compute modulation params
         γ, β, α = self.modulator(t_emb)  # Each [B, D]
+        γ = γ.clamp(-3.0, 3.0) # Clamp the output to -3.0 to 3.0 to give it bounds to maintain stability
+        β = β.clamp(-5.0, 5.0) # ""  ""
+        α = α.clamp(-3.0, 3.0) # ""  ""
 
         if torch.isnan(α).any() or torch.isinf(α).any():
             print(f"[NaN/Inf] Detected in α")
@@ -148,11 +156,11 @@ class FeedForward_AdaLN(nn.Module):
             print(f"[NaN/Inf] Detected in γ")
         if torch.isnan(β).any() or torch.isinf(β).any():
             print(f"[NaN/Inf] Detected in β")
-        if Verbose_Stats:
+        if Verbose_Stats_Modulator:
             print(f"[STATS - AdaLN Modulator] α mean: {α.mean().item():.5f}, std: {α.std().item():.5f}")
-        if Verbose_Stats:
+        if Verbose_Stats_Modulator:
             print(f"[STATS - AdaLN Modulator] γ mean: {γ.mean().item():.5f}, std: {γ.std().item():.5f}")
-        if Verbose_Stats:
+        if Verbose_Stats_Modulator:
             print(f"[STATS - AdaLN Modulator] β mean: {β.mean().item():.5f}, std: {β.std().item():.5f}")
 
         γ = γ.unsqueeze(1)  # [B, 1, D]
@@ -162,13 +170,15 @@ class FeedForward_AdaLN(nn.Module):
         α = α.clamp(-3.0, 3.0)
         γ = γ.clamp(-3.0, 3.0)
         β = β.clamp(-5.0, 5.0)
+        if Verbose_Stats_ModulatorClamping:
+            print(f"[DEBUG - Clamping-FF_AdaLN] FeedForward_AdaLN Modulator: α: mean={α.mean().item():.5f}, std={α.std().item():.5f}, max={α.abs().max().item():.2f} | γ: mean={γ.mean().item():.5f}, std={γ.std().item():.5f}, max={γ.abs().max().item():.2f} | β: mean={β.mean().item():.5f}, std={β.std().item():.5f}, max={β.abs().max().item():.2f}")
 
         # Step 2: Modulate input
         x_mod = (1 + γ) * x + β  # [B, T, D]
 
         # Step 3: SwiGLU MLP
         x_proj = self.linear1(x_mod)
-        if Verbose_Stats:
+        if Verbose_Stats_Modulator:
             print(f"[STATS - FF_AdaLN] FF x_proj std: {x_proj.std().item():.5f}")
         x_gated, x_linear = x_proj.chunk(2, dim=-1)
         x_act = F.silu(x_gated) * x_linear
@@ -302,6 +312,11 @@ class DenoiserSelfAttention(nn.Module):
 
         # 1. Modulate input with AdaLN based on timestep
         γ, β, α = self.modulator(t_emb) # [batch, d_model] each
+        γ = γ.clamp(-3.0, 3.0) # Clamp the output to -3.0 to 3.0 to give it bounds to maintain stability
+        β = β.clamp(-5.0, 5.0) # ""  ""
+        α = α.clamp(-3.0, 3.0) # ""  ""
+        if Verbose_Stats_ModulatorClamping:
+            print(f"[DEBUG - Clamping-DnSA] DenoiserSelfAttention Modulator: α: mean={α.mean().item():.5f}, std={α.std().item():.5f}, max={α.abs().max().item():.2f} | γ: mean={γ.mean().item():.5f}, std={γ.std().item():.5f}, max={γ.abs().max().item():.2f} | β: mean={β.mean().item():.5f}, std={β.std().item():.5f}, max={β.abs().max().item():.2f}")
         γ = γ.unsqueeze(1) # -> [batch, 1, d_model]
         β = β.unsqueeze(1) # -> [batch, 1, d_model]
         α = α.unsqueeze(1) # -> [batch, 1, d_model]
@@ -339,6 +354,11 @@ class DenoiserCrossAttention(nn.Module):
 
         # 1. Modulate input with AdaLN based on timestep
         γ, β, α = self.modulator(t_emb) # [batch, d_model] each
+        γ = γ.clamp(-3.0, 3.0) # Clamp the output to -3.0 to 3.0 to give it bounds to maintain stability
+        β = β.clamp(-5.0, 5.0) # ""  ""
+        α = α.clamp(-3.0, 3.0) # ""  ""
+        if Verbose_Stats_ModulatorClamping:
+            print(f"[DEBUG - Clamping-DnCA] DenoiserCrossAttention Modulator: α: mean={α.mean().item():.5f}, std={α.std().item():.5f}, max={α.abs().max().item():.2f} | γ: mean={γ.mean().item():.5f}, std={γ.std().item():.5f}, max={γ.abs().max().item():.2f} | β: mean={β.mean().item():.5f}, std={β.std().item():.5f}, max={β.abs().max().item():.2f}")
         γ = γ.unsqueeze(1) # -> [batch, 1, d_model]
         β = β.unsqueeze(1) # -> [batch, 1, d_model]
         α = α.unsqueeze(1) # -> [batch, 1, d_model]
@@ -533,6 +553,11 @@ class DenoiserTower(nn.Module):
                 x = layer(x, context, timestep, dropout_denoiser=dropout_denoiser, training=training)
                 if Verbose_Model:
                     print(f"[DEBUG - model] After DenoiserLayer {i}: dtype = {x.dtype}, mean = {x.mean().item():.5f}, std = {x.std().item():.5f}")
+                if Verbose_Stats_ModulatorClamping and i == 2:
+                    # This is Layer 2, log α/γ/β from the self-attn modulator
+                    t_emb = timestep  # [B, d_model], matches your forward call
+                    γ, β, α = layer.self_attention.modulator(t_emb)
+                    print(f"[DEBUG - DenoiserTower] Denoiser Post-Layer α/β/γ: α: mean={α.mean().item():.5f}, std={α.std().item():.5f}, max={α.abs().max().item():.2f} | γ: mean={γ.mean().item():.5f}, std={γ.std().item():.5f}, max={γ.abs().max().item():.2f} | β: mean={β.mean().item():.5f}, std={β.std().item():.5f}, max={β.abs().max().item():.2f}")
 
             x = self.final_norm(x)
 
@@ -551,26 +576,40 @@ class DenoiserTower(nn.Module):
 ## ------------------------------------------------------------
 
 def l2_euclidean_loss_with_mask(
-        predicted: torch.Tensor,       # [B, T, D]
-        target: torch.Tensor,          # [B, D]
-        attention_mask: torch.Tensor   # [B, T]
+        predicted: torch.Tensor,       # [B, T, D] or [B, D]
+        target: torch.Tensor,          # [B, T, D] or [B, D]
+        attention_mask: torch.Tensor   # [B, T] or [B, 1]
     ) -> torch.Tensor:
     """
-    Computes average L2 (Euclidean) distance between predicted and target only
-    at the last non-masked token position.
+    Computes mean L2 (Euclidean) distance between predicted and target at every non-masked token position.
     """
-    if Verbose_Model:
-        print(f"[DEBUG - model] l2_euclidean_loss_with_mask: predicted.shape = {predicted.shape}, target.shape = {target.shape}, attention_mask.shape = {attention_mask.shape}")
+    if Verbose_Loss:
+        print(f"[DEBUG - Loss] l2_euclidean_loss_with_mask: predicted.shape = {predicted.shape}, target.shape = {target.shape}, attention_mask.shape = {attention_mask.shape}")
 
-    # [B, D]: grab final predicted and ground truth token for each sequence
-    x_last = predicted[:, -1, :]  # [B, D]
-    y = target # [B, D]
+    # Ensure all tensors are 3D (add time dim if needed)
+    if predicted.dim() == 2:
+        predicted = predicted.unsqueeze(1)
+    if target.dim() == 2:
+        target = target.unsqueeze(1)
+    if attention_mask.dim() == 1:
+        attention_mask = attention_mask.unsqueeze(1)
 
-    # Compute L2 norm per sample, then average
-    l2 = torch.norm(x_last - y, dim=-1)  # [B]
-    return l2.mean()
+    # Make shapes match (truncate to min sequence length)
+    T = min(predicted.shape[1], target.shape[1], attention_mask.shape[1])
+    predicted = predicted[:, :T, :]
+    target = target[:, :T, :]
+    attention_mask = attention_mask[:, :T]
 
-
+    # Compute L2 norm at every position: [B, T]
+    l2 = torch.norm(predicted - target, dim=-1)  # [B, T]
+    # Zero out padded positions
+    l2 = l2 * attention_mask  # [B, T]
+    # Compute mean over all valid (non-masked) tokens
+    total_valid = attention_mask.sum()
+    # Avoid div by zero
+    if total_valid == 0:
+        return l2.mean()  # fallback, should never trigger if mask is good
+    return l2.sum() / total_valid
 
 ## ------------------------------------------------------------
 ## LexaLCM Model's Main Architecture
@@ -721,9 +760,9 @@ class LexaLCM(PreTrainedModel):
 
         return x
 
-    def forward(self, embeddings, labels=None, attention_mask=None):
-        if Verbose_Model:
-            print(f"[DEBUG - model] embeddings: shape={embeddings.shape}, dtype={embeddings.dtype}")
+    def forward(self, embeddings, labels=None, attention_mask=None, **kwargs):
+        if Verbose_Loss:
+            print(f"[DEBUG - Loss] embeddings: shape={embeddings.shape}, dtype={embeddings.dtype}")
 
         # Convert attention_mask [B, T] into boolean mask where True = keep, False = pad
         padding_mask = attention_mask.bool() if attention_mask is not None else torch.ones_like(embeddings[:, :, 0]).bool()
@@ -735,6 +774,10 @@ class LexaLCM(PreTrainedModel):
         for layer in self.DenoiserTower.layers:
             layer.self_attention.padding_mask = padding_mask
             layer.cross_attention.padding_mask = padding_mask
+
+        inspection_decoder = getattr(self, "inspection_decoder", None)
+        if inspection_decoder is not None:
+            inspect_util(embeddings, inspection_decoder, num_batches=1, num_seqs=8) # ToDo: make this configurable
         
         # PreNet - Contextualizer Tower
 
@@ -800,24 +843,39 @@ class LexaLCM(PreTrainedModel):
             if Verbose_Model:
                 print(f"[DEBUG - model] after PostNet_D_Down: shape={x.shape}, dtype={x.dtype}")
 
+        if inspection_decoder is not None:
+            inspect_util(x, inspection_decoder, num_batches=1, num_seqs=8) # ToDo: make this configurable
+
         if Verbose_Model:
             print(f"[DEBUG - model] final output: shape={x.shape}, dtype={x.dtype}")
 
         if labels is not None:
-            labels = labels.unsqueeze(1)  # [B, 1, D]
-
-            # Shape fix: model returns [B, D] but loss expects [B, T, D]
-            x = x.unsqueeze(1)           # [B, 1, D]
-            labels = labels.unsqueeze(1) # [B, 1, D]
-            attention_mask = torch.ones(x.shape[:2], dtype=torch.bool, device=x.device)  # [B, 1]
+            # labels: [B, T, D], x: [B, T, D], attention_mask: [B, T]
             if Verbose_Model:   
                 print(f"[DEBUG - model] labels is not None, returning loss and logits - shape={x.shape}, dtype={x.dtype}")
             return {
                 "loss": l2_euclidean_loss_with_mask(x, labels, attention_mask),
-                "logits": x.squeeze(1),  # Optional: remove fake T dimension for outputs
+                "logits": x,  # Keep all timesteps for analysis
             }
+
+        # if labels is not None:
+        #     labels = labels.unsqueeze(1)  # [B, 1, D]
+
+        #     # Shape fix: model returns [B, D] but loss expects [B, T, D]
+        #     x = x.unsqueeze(1)           # [B, 1, D]
+        #     labels = labels.unsqueeze(1) # [B, 1, D]
+        #     attention_mask = torch.ones(x.shape[:2], dtype=torch.bool, device=x.device)  # [B, 1]
+        #     if Verbose_Model:   
+        #         print(f"[DEBUG - model] labels is not None, returning loss and logits - shape={x.shape}, dtype={x.dtype}")
+
+        #     return {
+        #         "loss": l2_euclidean_loss_with_mask(x, labels, attention_mask),
+        #         "logits": x.squeeze(1),  # Optional: remove fake T dimension for outputs
+        #     }
         else:
             print(f"[DEBUG - model] labels is None, returning x[:, -1:, :] - shape={x[:, -1:, :].shape}, dtype={x[:, -1:, :].dtype}")
+            if Verbose_Loss:
+                print(f"[DEBUG - Loss] Loss is {l2_euclidean_loss_with_mask(x, embeddings, torch.ones_like(embeddings[:, :, 0]).bool())}")
             return x[:, -1:, :]
 
 MODEL_MAPPING.register(LexaLCMConfig, LexaLCM)

@@ -114,17 +114,18 @@ class LCMDataset(Dataset):
             if self.max_seq_len and tensor.shape[0] > self.max_seq_len:
                 tensor = tensor[:self.max_seq_len]
 
+            # Shift for next-token: input[:-1], label[1:]
+            # [SOT, S1, S2, S3, S4, EOT, PAD] -> [S1, S2, S3, S4, EOT, PAD, PAD]
             return {
-                "embeddings": tensor,
-                "labels": tensor[-1]
+                "embeddings": tensor[:-1],   # [seq-1, 1024] for next-token-pred
+                "labels": tensor[1:]         # [seq-1, 1024] for next-token-pred
             }
 
         except Exception as e:
             print(f"❌ Skipping corrupted embedding at {path}:{row_idx} → {e}")
-            zero_tensor = torch.zeros((1, 1024), dtype=torch.float32)
             return {
-                "embeddings": zero_tensor,
-                "labels": zero_tensor.squeeze(0)
+                "embeddings": tensor[:-1],   # [seq-1, 1024]
+                "labels": tensor[1:]         # [seq-1, 1024]
             }
 
 
@@ -134,7 +135,7 @@ class LCMDataset_DryRun(Dataset):
         # Load 3 embeddings as a single training example
         for name in ["StartOfText", "HelloWorld", "EndOfText"]:
             with safe_open(f"src/LexaLCM/Data/SpecialConcepts/{name}.safetensors", framework="pt") as f:
-                embedding = f.get_tensor("embedding").squeeze(-2)  # [1024]
+                embedding = f.get_tensor("embedding").squeeze(-2) 
                 self.samples.append(embedding)
         
         # Each training example is a sequence of 3 embeddings: SoT, "Hello world.", EoT
@@ -147,8 +148,8 @@ class LCMDataset_DryRun(Dataset):
     def __getitem__(self, idx):
         # Return the same example repeatedly for testing
         return {
-            "embeddings": self.input_sequence,  # [3, 1024]
-            "labels": self.target               # [1024]
+            "embeddings": self.input_sequence[:-1],  # [3, 1024]
+            "labels": self.input_sequence[1:] 
         }
     
 class LCMCollator:
@@ -160,20 +161,30 @@ class LCMCollator:
 
     def __call__(self, features):
         # Each 'embeddings' entry is [seq, 1024]
+        # Pad embeddings and labels to same max_len
         sequences = [f["embeddings"] for f in features]
-        labels = torch.stack([f["labels"] for f in features])  # [batch, 1024]
-
+        label_seqs = [f["labels"] for f in features]
         max_len = max(seq.shape[0] for seq in sequences)
 
-        padded = []
+        # Pad labels
+        padded_labels = []
+        for seq in label_seqs:
+            pad_len = max_len - seq.shape[0]
+            if pad_len > 0:
+                pad = self.pad_embedding.unsqueeze(0).repeat(pad_len, 1)
+                seq = torch.cat([seq, pad], dim=0)
+            padded_labels.append(seq)
+        labels = torch.stack(padded_labels)  # [batch, max_len, 1024]
+
+        # Pad embeddings
+        padded_embeddings = []
         for seq in sequences:
             pad_len = max_len - seq.shape[0]
             if pad_len > 0:
-                pad = self.pad_embedding.unsqueeze(0).repeat(pad_len, 1)  # [pad_len, 1024]
-                seq = torch.cat([seq, pad], dim=0)  # [max_len, 1024]
-            padded.append(seq)
-
-        batch_embeddings = torch.stack(padded)  # [batch, max_len, 1024]
+                pad = self.pad_embedding.unsqueeze(0).repeat(pad_len, 1)
+                seq = torch.cat([seq, pad], dim=0)
+            padded_embeddings.append(seq)
+        batch_embeddings = torch.stack(padded_embeddings)  # [batch, max_len, 1024]
 
         attention_masks = []
         for seq in sequences:
@@ -189,6 +200,6 @@ class LCMCollator:
 
         return {
             "embeddings": batch_embeddings,        # [batch, seq, 1024]
-            "labels": labels,                      # [batch, 1024]
+            "labels": labels,                      # [batch, max_len, 1024]
             "attention_mask": batch_attention_mask # [batch, seq]
         }

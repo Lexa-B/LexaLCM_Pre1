@@ -15,8 +15,9 @@ training:
   max_seq_len: 128  # Truncate sequences that are longer than this *after* adding SoT and EoT
   output_dir: ./outputs
   save_every: 500
-  checkpoint_dir: ./checkpoints
-  resume_from: None # Set to True or specify a specific filename to resume from a checkpoint (e.g. ./checkpoints/checkpoint_step_5000.pt)
+  checkpoint_dir: ./outputs
+  resume_from: ./outputs/checkpoint-24000 # Set to True or specify a specific filename to resume from a checkpoint (e.g. ./checkpoints/checkpoint_step_5000.pt)
+  num_workers: 20 # How many cpu cores to use for data loading
 
 data:
   data_dir: /home/lexa/DevProjects/_Data/LexaLCM_Datasets/src/Datasets/Wikipedia_Ja/
@@ -26,5 +27,5 @@ data:
 
 wandb:
   project: LexaLCM_Pre1_Adafactor
-  run_name: lcm_run_001
+  run_name: lcm_run_003
   log_every: 5

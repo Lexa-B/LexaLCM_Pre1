@@ -4,8 +4,10 @@ from torch.optim.lr_scheduler import LambdaLR
 import wandb
 
 class LCMTrainer(Trainer):
-    def __init__(self, *args, config_dict=None, **kwargs):
+    def __init__(self, *args, config_dict=None, inspection_decoder=None, periodic_inspection_steps=500, **kwargs):
         self.config_dict = config_dict or {}
+        self.inspection_decoder = inspection_decoder
+        self.periodic_inspection_steps = periodic_inspection_steps
         kwargs.pop("config_dict", None)
         super().__init__(*args, **kwargs)
 
@@ -87,15 +89,47 @@ class LCMTrainer(Trainer):
             for line in grad_report:
                 print(f"  • {line}")
 
-
     def training_step(self, model, inputs, batch_size=None):
         model.train()
         inputs = self._prepare_inputs(inputs)
+
+        # Step-based inspection logic
+        step = self.state.global_step
+        print(f"[DEBUG] global_step = {step}, periodic_inspection_steps = {self.periodic_inspection_steps}. Encoder: {self.inspection_decoder}")
+        # Periodic Inspection - If the argument is set, trigger inspection of the embeddings before model forward and after PostNet_D_Down
+        if self.inspection_decoder is not None and self.periodic_inspection_steps > 0:
+            # Only turn on inspection every N steps (e.g., 100)
+            if step % self.periodic_inspection_steps == 0 and step != 0:
+                print("[DEBUG - Inspection] Enabling inspection_decoder for this step!")
+                model.inspection_decoder = self.inspection_decoder
+                model.periodic_inspection = True
+            else:
+                model.inspection_decoder = None
+                model.periodic_inspection = False
+
+            if step % self.periodic_inspection_steps == 0 and step != 0:
+                model.inspection_decoder = self.inspection_decoder
+                model.periodic_inspection = True
+            else:
+                model.inspection_decoder = None
+                model.periodic_inspection = False
+
+        # Inspection at every step - If the argument is set, trigger inspection of the embeddings before model forward and after PostNet_D_Down
+        elif self.inspection_decoder is not None:
+            model.inspection_decoder = self.inspection_decoder
+            model.periodic_inspection = False
+
+        # No inspection - If the argument is not set, do not trigger inspection of the embeddings before model forward and after PostNet_D_Down
+        else:
+            model.inspection_decoder = None
+            model.periodic_inspection = False
 
         with self.compute_loss_context_manager():
             loss = self.compute_loss(model, inputs)
 
         loss.backward()
+
+        print(f"[Step {self.state.global_step}] loss: {loss.item():.4f}")
 
         # ✅ Log gradient norms
         self.log_gradient_norms()
