@@ -8,7 +8,7 @@ Meta FAIR for the original implementation of Large Language Models. This project
 3Blue1Brown for his videos that helped me understand the concepts and math behind transformers.
 - [3Blue1Brown](https://www.youtube.com/@3blue1brown)
 
-Ebad Sayed for their Medium articles that helped me understand the coding of transformers... and a lot of code too 🙏🏼!
+Ebad Sayed for their Medium articles that helped me understand the coding of transformers... and I was heavily inspired on how to even start this Transformers version by their code too 🙏🏼!
 - [Ebad Sayed](https://medium.com/@sayedebad.777)
 
 **And most of all, the entire open-source community, without whom the world woud be a darker and more selfish place. Most of the internet is built on their generosity and gregarious commitment to sharing their knowledge and work with the world.**
