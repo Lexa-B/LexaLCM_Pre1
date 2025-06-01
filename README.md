@@ -10,7 +10,7 @@ It is a pre-trained LCM with 394,900,736 parameters mostly based on Meta FAIR's 
 最初のバージョンは、事前にセグメント化およびコンセプト埋め込みが行われた240万件の日本語および英語のWikipedia記事を用いて学習されています。セグメント化は、1セグメントあたり最大250文字に制限されたSaTを使用して行われ、埋め込みにはSONARが使用されました。
 [[データセット]](https://huggingface.co/datasets/Lexa-B/LexaLCM_Datasets)
 
-The first version was trained on a dataset of 2.4M Japanese Wikipedia articles that have been pre-segmented and concept-embedded. Segmentation was performed using SaT capped at 250 characters/segment and embedded was performed with SONAR.
+The first version was trained on a dataset of 1.4M Japanese Wikipedia articles that have been pre-segmented and concept-embedded. Segmentation was performed using SaT capped at 250 characters/segment and embedded was performed with SONAR.
 [[Dataset]](https://huggingface.co/datasets/Lexa-B/LexaLCM_Datasets)
 
 ## インストール手順 ｜ Installation
