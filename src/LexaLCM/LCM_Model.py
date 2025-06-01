@@ -17,7 +17,7 @@ Verbose_Contextualizer = False
 Verbose_Denoiser = False
 Verbose_Stats_Modulator = False
 Verbose_Stats_ModulatorClamping = False
-Verbose_Loss = True
+Verbose_Loss = False
 
 ## ------------------------------------------------------------
 ## Helper Layers
@@ -872,10 +872,13 @@ class LexaLCM(PreTrainedModel):
         #         "loss": l2_euclidean_loss_with_mask(x, labels, attention_mask),
         #         "logits": x.squeeze(1),  # Optional: remove fake T dimension for outputs
         #     }
+        # else:
+        #     print(f"[DEBUG - model] labels is None, returning x[:, -1:, :] - shape={x[:, -1:, :].shape}, dtype={x[:, -1:, :].dtype}")
+        #     if Verbose_Loss:
+        #         print(f"[DEBUG - Loss] Loss is {l2_euclidean_loss_with_mask(x, embeddings, torch.ones_like(embeddings[:, :, 0]).bool())}")
+        #     return x[:, -1:, :]
         else:
-            print(f"[DEBUG - model] labels is None, returning x[:, -1:, :] - shape={x[:, -1:, :].shape}, dtype={x[:, -1:, :].dtype}")
-            if Verbose_Loss:
-                print(f"[DEBUG - Loss] Loss is {l2_euclidean_loss_with_mask(x, embeddings, torch.ones_like(embeddings[:, :, 0]).bool())}")
-            return x[:, -1:, :]
+            print(f"[DEBUG - model] labels is None, likely being used for inference. Returning predictied embeddings - shape={x.shape}, dtype={x.dtype}")
+            return x
 
 MODEL_MAPPING.register(LexaLCMConfig, LexaLCM)

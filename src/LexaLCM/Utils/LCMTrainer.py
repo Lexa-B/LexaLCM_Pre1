@@ -3,6 +3,9 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 import wandb
 
+# ToDo: make these global variables that can be set to True/False from the command line, maybe
+Verbose_LCMTrainer = False
+
 class LCMTrainer(Trainer):
     def __init__(self, *args, config_dict=None, inspection_decoder=None, periodic_inspection_steps=500, **kwargs):
         self.config_dict = config_dict or {}
@@ -20,20 +23,28 @@ class LCMTrainer(Trainer):
 
         if opt_name == "adafactor":
             clip_val = self.config_dict["training"].get("clip_threshold", 1.0)
+            rel_step = self.config_dict["training"].get("adafactor_rel_step", True)
+            lr = self.config_dict["training"].get("learning_rate", 0.00005)
+            warmup_init = self.config_dict["training"].get("adafactor_warmup_init", True)
             self.optimizer = Adafactor(
                 params,
                 scale_parameter=True,
-                relative_step=True,
+                relative_step=rel_step,
                 clip_threshold=clip_val,
-                warmup_init=True,
-                # DO NOT pass `lr`
+                warmup_init=warmup_init,
+                lr=lr if rel_step is False else None, # Can't set lr if relative step or warmup_init is True
             )
 
             # 🩹 Manually patch param groups so dummy schedulers don't explode
             for group in self.optimizer.param_groups:
-                group["lr"] = 1e-3  # Safe dummy value
+                if warmup_init and rel_step:
+                    group["lr"] = 1e-3  # Safe dummy value
+                    print("[LCMTrainer] ✅ Adafactor initialized with dummy lr for scheduler safety")
+                else:
+                    group["lr"] = lr
+                    print(f"[LCMTrainer] ✅ Adafactor initialized with learning rate: {lr}")
 
-            print("[LCMTrainer] ✅ Adafactor initialized with dummy lr for scheduler safety")
+            
 
         elif opt_name == "adamw":
             self.optimizer = AdamW(
@@ -95,12 +106,14 @@ class LCMTrainer(Trainer):
 
         # Step-based inspection logic
         step = self.state.global_step
-        print(f"[DEBUG] global_step = {step}, periodic_inspection_steps = {self.periodic_inspection_steps}. Encoder: {self.inspection_decoder}")
+        if Verbose_LCMTrainer:
+            print(f"[DEBUG] global_step = {step}, periodic_inspection_steps = {self.periodic_inspection_steps}. Encoder: {self.inspection_decoder}")
         # Periodic Inspection - If the argument is set, trigger inspection of the embeddings before model forward and after PostNet_D_Down
         if self.inspection_decoder is not None and self.periodic_inspection_steps > 0:
             # Only turn on inspection every N steps (e.g., 100)
             if step % self.periodic_inspection_steps == 0 and step != 0:
-                print("[DEBUG - Inspection] Enabling inspection_decoder for this step!")
+                if Verbose_LCMTrainer:
+                    print("[DEBUG - Inspection] Enabling inspection_decoder for this step!")
                 model.inspection_decoder = self.inspection_decoder
                 model.periodic_inspection = True
             else:
